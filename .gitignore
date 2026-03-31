@@ -6,3 +6,7 @@ node_modules
 # CDK asset staging directory
 .cdk.staging
 cdk.out
+
+# Variables de entorno (nunca commitear valores reales)
+.env
+.env.local
