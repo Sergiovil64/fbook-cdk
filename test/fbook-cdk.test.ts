@@ -94,9 +94,15 @@ describe('FbookCdkStack — Cognito OIDC Authorization Server', () => {
     });
   });
 
-  test('the OIDC scopes include openid, email and profile', () => {
+  test('scopes are limited to openid and email (no profile scope)', () => {
     template.hasResourceProperties('AWS::Cognito::UserPoolClient', {
-      AllowedOAuthScopes: Match.arrayWith(['openid', 'email', 'profile']),
+      AllowedOAuthScopes: ['openid', 'email'],
+    });
+  });
+
+  test('only the Cognito native provider is enabled (no social IdPs)', () => {
+    template.hasResourceProperties('AWS::Cognito::UserPoolClient', {
+      SupportedIdentityProviders: ['COGNITO'],
     });
   });
 

@@ -6,6 +6,8 @@ import { Construct } from 'constructs';
  * FbookCdkStack
  *
  * Provisions an Amazon Cognito User Pool configured as an OIDC Authorization Server.
+ * Authentication method: email + password only (no social / federated identity providers).
+ *
  * The User Pool exposes standard OAuth 2.0 / OIDC endpoints under the Cognito domain:
  *   - /oauth2/authorize   → starts the Authorization Code Flow with PKCE
  *   - /oauth2/token       → exchanges the code for an ID token, Access token and Refresh token
@@ -16,10 +18,13 @@ import { Construct } from 'constructs';
  * Implemented flow: Authorization Code Flow with PKCE (RFC 7636)
  *   1. The app generates a code_verifier (random) and code_challenge = BASE64URL(SHA-256(code_verifier))
  *   2. Redirects the user to /oauth2/authorize with response_type=code, code_challenge, code_challenge_method=S256
- *   3. The user authenticates in the Cognito Hosted UI
+ *   3. The user authenticates with email + password in the Cognito Hosted UI
  *   4. Cognito redirects to the callbackUrl with the authorization code
  *   5. The app POSTs to /oauth2/token sending code + code_verifier (never in the browser)
  *   6. Cognito validates code_verifier against code_challenge and returns the tokens
+ *
+ * ID token claims available with the openid + email scopes:
+ *   sub, email, email_verified, iss, aud, exp, iat
  */
 export class FbookCdkStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -31,20 +36,18 @@ export class FbookCdkStack extends cdk.Stack {
       selfSignUpEnabled: true,
 
       signInAliases: { email: true },
-      autoVerify: { email: true },
+      autoVerify:    { email: true },
 
       standardAttributes: {
-        email:      { required: true, mutable: true },
-        givenName:  { required: true, mutable: true },
-        familyName: { required: true, mutable: true },
+        email: { required: true, mutable: true },
       },
 
       passwordPolicy: {
-        minLength: 8,
-        requireLowercase: true,
-        requireUppercase: true,
-        requireDigits: true,
-        requireSymbols: false,
+        minLength:            8,
+        requireLowercase:     true,
+        requireUppercase:     true,
+        requireDigits:        true,
+        requireSymbols:       false,
         tempPasswordValidity: cdk.Duration.days(7),
       },
 
@@ -61,19 +64,18 @@ export class FbookCdkStack extends cdk.Stack {
 
     const userPoolClient = userPool.addClient('FbookWebClient', {
       userPoolClientName: 'fbook-web-client',
-      generateSecret: false,
+      generateSecret:     false,
 
       oAuth: {
         flows: {
           authorizationCodeGrant: true,
-          implicitCodeGrant:      false,
-          clientCredentials:      false,
         },
 
+        // openid  → enables OIDC; issues an ID token
+        // email   → includes email + email_verified in the ID token
         scopes: [
           cognito.OAuthScope.OPENID,
           cognito.OAuthScope.EMAIL,
-          cognito.OAuthScope.PROFILE,
         ],
 
         callbackUrls: [
@@ -120,12 +122,6 @@ export class FbookCdkStack extends cdk.Stack {
       exportName:  'FbookUserPoolClientId',
     });
 
-    new cdk.CfnOutput(this, 'CognitoDomain', {
-      value:       baseUrl,
-      description: 'Cognito domain base URL (Hosted UI + OAuth endpoints)',
-      exportName:  'FbookCognitoDomain',
-    });
-
     new cdk.CfnOutput(this, 'OidcIssuer', {
       value:       issuerUrl,
       description: 'OIDC Issuer — use as "issuer" in your OIDC client configuration',
@@ -146,13 +142,13 @@ export class FbookCdkStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'AuthorizationEndpoint', {
       value:       cdk.Fn.join('', [baseUrl, '/oauth2/authorize']),
-      description: 'Flow step 1 — redirect here with response_type=code&code_challenge=...&code_challenge_method=S256',
+      description: 'Step 1 — redirect here with response_type=code&code_challenge=...&code_challenge_method=S256',
       exportName:  'FbookAuthorizationEndpoint',
     });
 
     new cdk.CfnOutput(this, 'TokenEndpoint', {
       value:       cdk.Fn.join('', [baseUrl, '/oauth2/token']),
-      description: 'Flow step 2 — POST here with grant_type=authorization_code&code=...&code_verifier=...',
+      description: 'Step 2 — POST here with grant_type=authorization_code&code=...&code_verifier=...',
       exportName:  'FbookTokenEndpoint',
     });
 
