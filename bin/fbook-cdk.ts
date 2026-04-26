@@ -4,9 +4,8 @@ import { FbookCdkStack }    from '../lib/fbook-cdk-stack';
 import { NetworkStack }     from '../lib/network-stack';
 import { BastionStack }     from '../lib/bastion-stack';
 import { AlbStack }         from '../lib/alb-stack';
+import { UsersStack }       from '../lib/users-stack';
 import { PublicationStack } from '../lib/publication-stack';
-import { CommentStack }     from '../lib/comment-stack';
-import { FriendshipStack }  from '../lib/friendship-stack';
 
 const app = new cdk.App();
 
@@ -51,26 +50,18 @@ const alb = new AlbStack(app, 'FbookAlbStack', {
   network,
 });
 
-// ── Stacks 5-7: Microservicios (EC2 t2.micro + DynamoDB) ─────────────────────
+// ── Stacks 5-6: Microservicios (EC2 t2.micro + DynamoDB) ─────────────────────
+new UsersStack(app, 'FbookUsersStack', {
+  env,
+  description: 'Fbook — Microservicio Usuarios: EC2 + DynamoDB Usuarios (IP: 10.0.2.10)',
+  tags,
+  network,
+  alb,
+});
+
 new PublicationStack(app, 'FbookPublicationStack', {
   env,
-  description: 'Fbook — Microservicio Publicaciones: EC2 + DynamoDB fbook-posts',
-  tags,
-  network,
-  alb,
-});
-
-new CommentStack(app, 'FbookCommentStack', {
-  env,
-  description: 'Fbook — Microservicio Comentarios: EC2 + DynamoDB fbook-comments',
-  tags,
-  network,
-  alb,
-});
-
-new FriendshipStack(app, 'FbookFriendshipStack', {
-  env,
-  description: 'Fbook — Microservicio Amistad: EC2 + DynamoDB fbook-friendships',
+  description: 'Fbook — Microservicio Publicaciones: EC2 + DynamoDB Publicaciones/Comentarios/Reacciones (IP: 10.0.2.12)',
   tags,
   network,
   alb,

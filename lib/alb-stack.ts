@@ -35,16 +35,20 @@ export class AlbStack extends cdk.Stack {
       description: 'Base URL of the API: http://<dns>/api/...',
     });
 
-    new cdk.CfnOutput(this, 'PublicationsEndpoint', {
-      value: `http://${this.alb.loadBalancerDnsName}/api/publications`,
+    new cdk.CfnOutput(this, 'UsuariosEndpoint', {
+      value: `http://${this.alb.loadBalancerDnsName}/v1/usuarios`,
     });
 
-    new cdk.CfnOutput(this, 'CommentsEndpoint', {
-      value: `http://${this.alb.loadBalancerDnsName}/api/comments`,
+    new cdk.CfnOutput(this, 'PublicacionesEndpoint', {
+      value: `http://${this.alb.loadBalancerDnsName}/v1/publicaciones`,
     });
 
-    new cdk.CfnOutput(this, 'FriendshipsEndpoint', {
-      value: `http://${this.alb.loadBalancerDnsName}/api/friendships`,
+    new cdk.CfnOutput(this, 'ComentariosEndpoint', {
+      value: `http://${this.alb.loadBalancerDnsName}/v1/comentarios`,
+    });
+
+    new cdk.CfnOutput(this, 'ReaccionesEndpoint', {
+      value: `http://${this.alb.loadBalancerDnsName}/v1/reacciones`,
     });
   }
 }

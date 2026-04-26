@@ -13,45 +13,65 @@ interface PublicationStackProps extends cdk.StackProps {
 }
 
 export class PublicationStack extends cdk.Stack {
-  readonly table: dynamodb.TableV2;
+  readonly tablePublicaciones: dynamodb.TableV2;
+  readonly tableComentarios: dynamodb.TableV2;
+  readonly tableReacciones: dynamodb.TableV2;
 
   constructor(scope: Construct, id: string, props: PublicationStackProps) {
     super(scope, id, props);
 
-    this.table = new dynamodb.TableV2(this, 'PostsTable', {
-      tableName: 'fbook-posts',
-      partitionKey: { name: 'userId', type: dynamodb.AttributeType.STRING },
-      sortKey:      { name: 'postId', type: dynamodb.AttributeType.STRING },
-      billing:      dynamodb.Billing.onDemand(),
+    // ── Tablas DynamoDB ───────────────────────────────────────────────────────
+    this.tablePublicaciones = new dynamodb.TableV2(this, 'PublicacionesTable', {
+      tableName: 'Publicaciones',
+      partitionKey: { name: 'id', type: dynamodb.AttributeType.NUMBER },
+      billing: dynamodb.Billing.onDemand(),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
-      globalSecondaryIndexes: [
-        {
-          indexName: 'postId-index',
-          partitionKey: { name: 'postId', type: dynamodb.AttributeType.STRING },
-        },
-      ],
     });
 
+    this.tableComentarios = new dynamodb.TableV2(this, 'ComentariosTable', {
+      tableName: 'Comentarios',
+      partitionKey: { name: 'id', type: dynamodb.AttributeType.NUMBER },
+      billing: dynamodb.Billing.onDemand(),
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    this.tableReacciones = new dynamodb.TableV2(this, 'ReaccionesTable', {
+      tableName: 'Reacciones',
+      partitionKey: { name: 'id', type: dynamodb.AttributeType.NUMBER },
+      billing: dynamodb.Billing.onDemand(),
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    // ── User Data ─────────────────────────────────────────────────────────────
     const userData = ec2.UserData.forLinux();
     userData.addCommands(
       'dnf update -y',
-      // Servidor placeholder en Python (pre-instalado en AL2023)
+      // Env file que usará el contenedor Docker cuando se integre ECR
+      "cat > /opt/fbook.env << 'EOF'",
+      'TABLE_NAME=Publicaciones',
+      'TABLE_COMENTARIOS=Comentarios',
+      'TABLE_REACCIONES=Reacciones',
+      'USUARIO_SERVICE_URL=http://10.0.2.10:3000',
+      'PUBLICACION_SERVICE_URL=http://10.0.2.12:3000',
+      'AWS_REGION=us-east-1',
+      'PORT=3000',
+      'EOF',
+      // Servidor placeholder en Python — reemplazar con Docker en el paso ECR
       "cat > /opt/fbook-svc.py << 'PYEOF'",
       'import http.server, socketserver, json',
       'class H(http.server.BaseHTTPRequestHandler):',
       '    def do_GET(self):',
-      '        b = json.dumps({"service": "publications", "status": "ok"}).encode()',
+      '        b = json.dumps({"service": "publicaciones", "status": "ok"}).encode()',
       '        self.send_response(200)',
       '        self.send_header("Content-Type", "application/json")',
       '        self.end_headers()',
       '        self.wfile.write(b)',
       '    def log_message(self, *a): pass',
-      'socketserver.TCPServer(("", 8080), H).serve_forever()',
+      'socketserver.TCPServer(("", 3000), H).serve_forever()',
       'PYEOF',
-      // Systemd para que reinicie automáticamente si la instancia se reinicia
       "cat > /etc/systemd/system/fbook-svc.service << 'EOF'",
       '[Unit]',
-      'Description=Fbook Publications Service',
+      'Description=Fbook Publicaciones Service',
       'After=network.target',
       '[Service]',
       'ExecStart=/usr/bin/python3 /opt/fbook-svc.py',
@@ -64,24 +84,32 @@ export class PublicationStack extends cdk.Stack {
       'systemctl enable --now fbook-svc',
     );
 
-    const instance = new ec2.Instance(this, 'PublicationEc2', {
+    // ── EC2 con IP privada estática ───────────────────────────────────────────
+    const privateSubnet = props.network.vpc.selectSubnets({
+      subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+    }).subnets[0];
+
+    const instance = new ec2.Instance(this, 'PublicacionEc2', {
       vpc: props.network.vpc,
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      vpcSubnets: { subnets: [privateSubnet] },
       instanceType: ec2.InstanceType.of(ec2.InstanceClass.T2, ec2.InstanceSize.MICRO),
       machineImage: ec2.MachineImage.latestAmazonLinux2023(),
       securityGroup: props.network.sgMicroservice,
       keyPair: props.network.keyPair,
+      privateIpAddress: '10.0.2.12',
       userData,
     });
 
-    this.table.grantReadWriteData(instance.role);
+    this.tablePublicaciones.grantReadWriteData(instance.role);
+    this.tableComentarios.grantReadWriteData(instance.role);
+    this.tableReacciones.grantReadWriteData(instance.role);
 
     // ── ALB Target Group + Listener Rule ──────────────────────────────────────
-    const targetGroup = new elbv2.ApplicationTargetGroup(this, 'PublicationTg', {
+    const targetGroup = new elbv2.ApplicationTargetGroup(this, 'PublicacionTg', {
       vpc: props.network.vpc,
-      port: 8080,
+      port: 3000,
       protocol: elbv2.ApplicationProtocol.HTTP,
-      targets: [new targets.InstanceTarget(instance, 8080)],
+      targets: [new targets.InstanceTarget(instance, 3000)],
       healthCheck: {
         path: '/',
         healthyHttpCodes: '200',
@@ -92,27 +120,32 @@ export class PublicationStack extends cdk.Stack {
       },
     });
 
-    new elbv2.ApplicationListenerRule(this, 'PublicationRule', {
+    // publicaciones + comentarios + reacciones van al mismo EC2
+    new elbv2.ApplicationListenerRule(this, 'PublicacionRule', {
       listener: props.alb.listener,
-      priority: 10,
+      priority: 20,
       conditions: [
-        elbv2.ListenerCondition.pathPatterns(['/api/publications', '/api/publications/*']),
+        elbv2.ListenerCondition.pathPatterns([
+          '/v1/publicaciones', '/v1/publicaciones/*',
+          '/v1/comentarios',   '/v1/comentarios/*',
+          '/v1/reacciones',    '/v1/reacciones/*',
+        ]),
       ],
       action: elbv2.ListenerAction.forward([targetGroup]),
     });
 
-    new cdk.CfnOutput(this, 'PublicationInstanceId', {
+    // ── Outputs ───────────────────────────────────────────────────────────────
+    new cdk.CfnOutput(this, 'PublicacionInstanceId', {
       value: instance.instanceId,
-      description: 'ID of the EC2 instance (for SSH via Bastion)',
+      description: 'ID de la instancia EC2 (para SSH via Bastion)',
     });
 
-    new cdk.CfnOutput(this, 'PublicationPrivateIp', {
+    new cdk.CfnOutput(this, 'PublicacionPrivateIp', {
       value: instance.instancePrivateIp,
-      description: 'Private IP of the EC2 Publication',
     });
 
-    new cdk.CfnOutput(this, 'PostsTableName', {
-      value: this.table.tableName,
-    });
+    new cdk.CfnOutput(this, 'PublicacionesTableName', { value: this.tablePublicaciones.tableName });
+    new cdk.CfnOutput(this, 'ComentariosTableName',   { value: this.tableComentarios.tableName });
+    new cdk.CfnOutput(this, 'ReaccionesTableName',    { value: this.tableReacciones.tableName });
   }
 }

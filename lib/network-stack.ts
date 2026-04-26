@@ -62,11 +62,12 @@ export class NetworkStack extends cdk.Stack {
       description: 'EC2 microservices: traffic from ALB and SSH from Bastion',
       allowAllOutbound: true,
     });
-    this.sgMicroservice.addIngressRule(this.sgAlb, ec2.Port.tcp(8080), 'App desde ALB');
-    this.sgMicroservice.addIngressRule(this.sgBastion, ec2.Port.tcp(22), 'SSH desde Bastion');
+    this.sgMicroservice.addIngressRule(this.sgAlb,           ec2.Port.tcp(3000), 'App desde ALB');
+    this.sgMicroservice.addIngressRule(this.sgBastion,       ec2.Port.tcp(22),   'SSH desde Bastion');
+    this.sgMicroservice.addIngressRule(this.sgMicroservice,  ec2.Port.tcp(3000), 'Llamadas inter-servicio');
 
     // Allow the ALB to reach the microservices
-    this.sgAlb.addEgressRule(this.sgMicroservice, ec2.Port.tcp(8080), 'To microservices');
+    this.sgAlb.addEgressRule(this.sgMicroservice, ec2.Port.tcp(3000), 'To microservices');
 
     new cdk.CfnOutput(this, 'KeyPairSsmCommand', {
       value: [
