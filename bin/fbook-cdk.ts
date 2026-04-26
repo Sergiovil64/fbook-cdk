@@ -5,6 +5,7 @@ import { NetworkStack }     from '../lib/network-stack';
 import { BastionStack }     from '../lib/bastion-stack';
 import { AlbStack }         from '../lib/alb-stack';
 import { UsersStack }       from '../lib/users-stack';
+import { AmistadStack }     from '../lib/amistad-stack';
 import { PublicationStack } from '../lib/publication-stack';
 
 const app = new cdk.App();
@@ -20,7 +21,7 @@ const tags = {
   ManagedBy:   'CDK',
 };
 
-// ── Stack 1: Autenticación (existente) ────────────────────────────────────────
+// ── Stack 1: Autenticación ────────────────────────────────────────────────────
 new FbookCdkStack(app, 'FbookCdkStack', {
   env,
   description: 'Fbook — Cognito User Pool as an OIDC Authorization Server (Authorization Code Flow + PKCE)',
@@ -50,18 +51,29 @@ const alb = new AlbStack(app, 'FbookAlbStack', {
   network,
 });
 
-// ── Stacks 5-6: Microservicios (EC2 t2.micro + DynamoDB) ─────────────────────
+// ── Stacks 5-7: Microservicios (EC2 t2.micro + DynamoDB) ─────────────────────
+// IP privada estática: 10.0.2.10
 new UsersStack(app, 'FbookUsersStack', {
   env,
-  description: 'Fbook — Microservicio Usuarios: EC2 + DynamoDB Usuarios (IP: 10.0.2.10)',
+  description: 'Fbook — Microservicio Usuarios: EC2 + DynamoDB Usuarios',
   tags,
   network,
   alb,
 });
 
+// IP privada estática: 10.0.2.11
+new AmistadStack(app, 'FbookAmistadStack', {
+  env,
+  description: 'Fbook — Microservicio Amistad: EC2 + DynamoDB Amistades',
+  tags,
+  network,
+  alb,
+});
+
+// IP privada estática: 10.0.2.12
 new PublicationStack(app, 'FbookPublicationStack', {
   env,
-  description: 'Fbook — Microservicio Publicaciones: EC2 + DynamoDB Publicaciones/Comentarios/Reacciones (IP: 10.0.2.12)',
+  description: 'Fbook — Microservicio Publicaciones: EC2 + DynamoDB Publicaciones/Comentarios/Reacciones',
   tags,
   network,
   alb,

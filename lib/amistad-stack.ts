@@ -9,38 +9,22 @@ import { NetworkStack } from './network-stack';
 import { AlbStack } from './alb-stack';
 
 const ECR_BASE = '140858350333.dkr.ecr.us-east-1.amazonaws.com';
-const IMAGE    = `${ECR_BASE}/fbook-service-publicacion:latest`;
+const IMAGE    = `${ECR_BASE}/fbook-service-amistad:latest`;
 
-interface PublicationStackProps extends cdk.StackProps {
+interface AmistadStackProps extends cdk.StackProps {
   network: NetworkStack;
   alb: AlbStack;
 }
 
-export class PublicationStack extends cdk.Stack {
-  readonly tablePublicaciones: dynamodb.TableV2;
-  readonly tableComentarios: dynamodb.TableV2;
-  readonly tableReacciones: dynamodb.TableV2;
+export class AmistadStack extends cdk.Stack {
+  readonly table: dynamodb.TableV2;
 
-  constructor(scope: Construct, id: string, props: PublicationStackProps) {
+  constructor(scope: Construct, id: string, props: AmistadStackProps) {
     super(scope, id, props);
 
-    // ── Tablas DynamoDB ───────────────────────────────────────────────────────
-    this.tablePublicaciones = new dynamodb.TableV2(this, 'PublicacionesTable', {
-      tableName: 'Publicaciones',
-      partitionKey: { name: 'id', type: dynamodb.AttributeType.NUMBER },
-      billing: dynamodb.Billing.onDemand(),
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-    });
-
-    this.tableComentarios = new dynamodb.TableV2(this, 'ComentariosTable', {
-      tableName: 'Comentarios',
-      partitionKey: { name: 'id', type: dynamodb.AttributeType.NUMBER },
-      billing: dynamodb.Billing.onDemand(),
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-    });
-
-    this.tableReacciones = new dynamodb.TableV2(this, 'ReaccionesTable', {
-      tableName: 'Reacciones',
+    // ── Tabla DynamoDB ────────────────────────────────────────────────────────
+    this.table = new dynamodb.TableV2(this, 'AmistadTable', {
+      tableName: 'Amistades',
       partitionKey: { name: 'id', type: dynamodb.AttributeType.NUMBER },
       billing: dynamodb.Billing.onDemand(),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
@@ -59,11 +43,8 @@ export class PublicationStack extends cdk.Stack {
       `docker pull ${IMAGE}`,
       // Variables de entorno del contenedor
       "cat > /opt/fbook.env << 'EOF'",
-      'TABLE_NAME=Publicaciones',
-      'TABLE_COMENTARIOS=Comentarios',
-      'TABLE_REACCIONES=Reacciones',
+      'TABLE_NAME=Amistades',
       'USUARIO_SERVICE_URL=http://10.0.2.10:3000',
-      'PUBLICACION_SERVICE_URL=http://10.0.2.12:3000',
       'AWS_REGION=us-east-1',
       'PORT=3000',
       'EOF',
@@ -77,14 +58,14 @@ export class PublicationStack extends cdk.Stack {
       subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
     }).subnets[0];
 
-    const instance = new ec2.Instance(this, 'PublicacionEc2', {
+    const instance = new ec2.Instance(this, 'AmistadEc2', {
       vpc: props.network.vpc,
       vpcSubnets: { subnets: [privateSubnet] },
       instanceType: ec2.InstanceType.of(ec2.InstanceClass.T2, ec2.InstanceSize.MICRO),
       machineImage: ec2.MachineImage.latestAmazonLinux2023(),
       securityGroup: props.network.sgMicroservice,
       keyPair: props.network.keyPair,
-      privateIpAddress: '10.0.2.12',
+      privateIpAddress: '10.0.2.11',
       userData,
     });
 
@@ -95,15 +76,13 @@ export class PublicationStack extends cdk.Stack {
     };
 
     // Permisos DynamoDB y ECR
-    this.tablePublicaciones.grantReadWriteData(instance.role);
-    this.tableComentarios.grantReadWriteData(instance.role);
-    this.tableReacciones.grantReadWriteData(instance.role);
+    this.table.grantReadWriteData(instance.role);
     instance.role.addManagedPolicy(
       iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonEC2ContainerRegistryReadOnly'),
     );
 
     // ── ALB Target Group + Listener Rule ──────────────────────────────────────
-    const targetGroup = new elbv2.ApplicationTargetGroup(this, 'PublicacionTg', {
+    const targetGroup = new elbv2.ApplicationTargetGroup(this, 'AmistadTg', {
       vpc: props.network.vpc,
       port: 3000,
       protocol: elbv2.ApplicationProtocol.HTTP,
@@ -118,32 +97,27 @@ export class PublicationStack extends cdk.Stack {
       },
     });
 
-    // publicaciones + comentarios + reacciones van al mismo EC2
-    new elbv2.ApplicationListenerRule(this, 'PublicacionRule', {
+    new elbv2.ApplicationListenerRule(this, 'AmistadRule', {
       listener: props.alb.listener,
-      priority: 20,
+      priority: 30,
       conditions: [
-        elbv2.ListenerCondition.pathPatterns([
-          '/v1/publicaciones', '/v1/publicaciones/*',
-          '/v1/comentarios',   '/v1/comentarios/*',
-          '/v1/reacciones',    '/v1/reacciones/*',
-        ]),
+        elbv2.ListenerCondition.pathPatterns(['/v1/amistades', '/v1/amistades/*']),
       ],
       action: elbv2.ListenerAction.forward([targetGroup]),
     });
 
     // ── Outputs ───────────────────────────────────────────────────────────────
-    new cdk.CfnOutput(this, 'PublicacionInstanceId', {
+    new cdk.CfnOutput(this, 'AmistadInstanceId', {
       value: instance.instanceId,
       description: 'ID de la instancia EC2 (para SSH via Bastion)',
     });
 
-    new cdk.CfnOutput(this, 'PublicacionPrivateIp', {
+    new cdk.CfnOutput(this, 'AmistadPrivateIp', {
       value: instance.instancePrivateIp,
     });
 
-    new cdk.CfnOutput(this, 'PublicacionesTableName', { value: this.tablePublicaciones.tableName });
-    new cdk.CfnOutput(this, 'ComentariosTableName',   { value: this.tableComentarios.tableName });
-    new cdk.CfnOutput(this, 'ReaccionesTableName',    { value: this.tableReacciones.tableName });
+    new cdk.CfnOutput(this, 'AmistadTableName', {
+      value: this.table.tableName,
+    });
   }
 }

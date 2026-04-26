@@ -1,11 +1,15 @@
 import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as targets from 'aws-cdk-lib/aws-elasticloadbalancingv2-targets';
 import { Construct } from 'constructs';
 import { NetworkStack } from './network-stack';
 import { AlbStack } from './alb-stack';
+
+const ECR_BASE = '140858350333.dkr.ecr.us-east-1.amazonaws.com';
+const IMAGE    = `${ECR_BASE}/fbook-service-usuario:latest`;
 
 interface UsersStackProps extends cdk.StackProps {
   network: NetworkStack;
@@ -30,38 +34,22 @@ export class UsersStack extends cdk.Stack {
     const userData = ec2.UserData.forLinux();
     userData.addCommands(
       'dnf update -y',
-      // Env file que usará el contenedor Docker cuando se integre ECR
+      'dnf install -y docker',
+      'systemctl enable docker',
+      'systemctl start docker',
+      // Login a ECR usando el IAM role del EC2
+      `aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${ECR_BASE}`,
+      // Pull de la imagen
+      `docker pull ${IMAGE}`,
+      // Variables de entorno del contenedor
       "cat > /opt/fbook.env << 'EOF'",
       'TABLE_NAME=Usuarios',
       'AWS_REGION=us-east-1',
       'PORT=3000',
       'EOF',
-      // Servidor placeholder en Python — reemplazar con Docker en el paso ECR
-      "cat > /opt/fbook-svc.py << 'PYEOF'",
-      'import http.server, socketserver, json',
-      'class H(http.server.BaseHTTPRequestHandler):',
-      '    def do_GET(self):',
-      '        b = json.dumps({"service": "usuarios", "status": "ok"}).encode()',
-      '        self.send_response(200)',
-      '        self.send_header("Content-Type", "application/json")',
-      '        self.end_headers()',
-      '        self.wfile.write(b)',
-      '    def log_message(self, *a): pass',
-      'socketserver.TCPServer(("", 3000), H).serve_forever()',
-      'PYEOF',
-      "cat > /etc/systemd/system/fbook-svc.service << 'EOF'",
-      '[Unit]',
-      'Description=Fbook Usuarios Service',
-      'After=network.target',
-      '[Service]',
-      'ExecStart=/usr/bin/python3 /opt/fbook-svc.py',
-      'Restart=always',
-      'User=nobody',
-      '[Install]',
-      'WantedBy=multi-user.target',
-      'EOF',
-      'systemctl daemon-reload',
-      'systemctl enable --now fbook-svc',
+      // Arrancar contenedor (--restart always lo relanza si Docker reinicia)
+      'docker rm -f fbook-svc || true',
+      `docker run -d --name fbook-svc --restart always -p 3000:3000 --env-file /opt/fbook.env ${IMAGE}`,
     );
 
     // ── EC2 con IP privada estática ───────────────────────────────────────────
@@ -80,7 +68,17 @@ export class UsersStack extends cdk.Stack {
       userData,
     });
 
+    // Hop limit 2: necesario para que el contenedor Docker acceda al IAM role via IMDSv2
+    (instance.node.defaultChild as ec2.CfnInstance).metadataOptions = {
+      httpTokens: 'required',
+      httpPutResponseHopLimit: 2,
+    };
+
+    // Permisos para leer/escribir DynamoDB y para hacer pull de ECR
     this.table.grantReadWriteData(instance.role);
+    instance.role.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonEC2ContainerRegistryReadOnly'),
+    );
 
     // ── ALB Target Group + Listener Rule ──────────────────────────────────────
     const targetGroup = new elbv2.ApplicationTargetGroup(this, 'UsuarioTg', {

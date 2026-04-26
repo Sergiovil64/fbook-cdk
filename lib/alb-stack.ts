@@ -50,5 +50,9 @@ export class AlbStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ReaccionesEndpoint', {
       value: `http://${this.alb.loadBalancerDnsName}/v1/reacciones`,
     });
+
+    new cdk.CfnOutput(this, 'AmistadEndpoint', {
+      value: `http://${this.alb.loadBalancerDnsName}/v1/amistades`,
+    });
   }
 }
