@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project provisions the AWS infrastructure for **Fbook**, a Facebook-like social network clone, using AWS CDK (TypeScript). The system is composed of three independent microservices — Publications, Comments, and Friendships — each running on its own EC2 instance and backed by a dedicated DynamoDB table.
+This project provisions the AWS infrastructure for **Fbook**, a Facebook-like social network clone, using AWS CDK (TypeScript). The system is composed of three independent NestJS microservices — Usuarios, Amistad, and Publicaciones — each running as a Docker container on its own EC2 instance and backed by dedicated DynamoDB tables.
 
 Authentication is handled by a Cognito User Pool acting as a fully compliant OIDC Authorization Server (Authorization Code Flow + PKCE).
 
@@ -25,40 +25,37 @@ Authentication is handled by a Cognito User Pool acting as a fully compliant OID
             │  │ AZ-1a (10.0.0.0/24)                   │  │
             │  │  ┌──────────────┐  ┌───────────────┐  │  │
             │  │  │    Bastion   │  │  NAT Gateway  │  │  │
-            │  │  │   t2.micro   │  │               │  │  │
+            │  │  │   t3.micro   │  │               │  │  │
             │  │  └──────────────┘  └───────────────┘  │  │
             │  │                                        │  │
             │  │ AZ-1b (10.0.1.0/24)  [HA for ALB]    │  │
             │  └────────────────────────────────────────┘  │
             │                                              │
-            │  ┌──────────────── ALB ───────────────────┐  │
+            │  ┌──────────────────── ALB ───────────────┐  │
             │  │   (spans AZ-1a + AZ-1b, HTTP :80)      │  │
-            │  │   /api/publications  →  TG-Publication  │  │
-            │  │   /api/comments      →  TG-Comment      │  │
-            │  │   /api/friendships   →  TG-Friendship   │  │
-            │  └──────────┬─────────────┬───────────────┘  │
-            │             │             │          │        │
-            │  PRIVATE SUBNETS                             │
+            │  │   /v1/usuarios*      → TG-Usuarios      │  │
+            │  │   /v1/publicaciones* → TG-Publicacion   │  │
+            │  │   /v1/comentarios*   → TG-Publicacion   │  │
+            │  │   /v1/reacciones*    → TG-Publicacion   │  │
+            │  │   /v1/amistades*     → TG-Amistad       │  │
+            │  └──────────┬──────────────┬──────────────┘  │
+            │             │              │                  │
+            │  PRIVATE SUBNET (10.0.2.0/24)                │
             │  ┌──────────────────────────────────────┐    │
-            │  │ AZ-1a (10.0.10.0/24)                 │    │
-            │  │  ┌──────────────────────────────┐    │    │
-            │  │  │   EC2 Publication  t2.micro  │    │    │
-            │  │  │         :8080                │    │    │
-            │  │  └──────────────────────────────┘    │    │
-            │  │                                      │    │
-            │  │ AZ-1b (10.0.11.0/24)                 │    │
-            │  │  ┌──────────────┐  ┌──────────────┐  │    │
-            │  │  │ EC2 Comment  │  │ EC2 Friendship│  │    │
-            │  │  │   t2.micro   │  │   t2.micro   │  │    │
-            │  │  │    :8080     │  │    :8080     │  │    │
-            │  │  └──────────────┘  └──────────────┘  │    │
+            │  │  EC2 Usuarios     10.0.2.10  :3000   │    │
+            │  │  EC2 Amistad      10.0.2.11  :3000   │    │
+            │  │  EC2 Publicacion  10.0.2.12  :3000   │    │
+            │  │  (all t3.micro — Docker containers)  │    │
             │  └──────────────────────────────────────┘    │
             │                                              │
             │  VPC Gateway Endpoint  (DynamoDB — free)     │
             └──────────────────────────────────────────────┘
-                    │              │              │
-             fbook-posts    fbook-comments  fbook-friendships
-              (DynamoDB)      (DynamoDB)      (DynamoDB)
+                    │         │         │         │
+               Usuarios  Amistades Publicaciones Comentarios
+               (DynamoDB)(DynamoDB) (DynamoDB)  (DynamoDB)
+                                                    │
+                                               Reacciones
+                                               (DynamoDB)
 
 
   Cognito User Pool (OIDC / PKCE)  ←  separate managed stack
@@ -86,25 +83,23 @@ Provisions a **Cognito User Pool** configured as an OIDC Authorization Server.
 
 The networking foundation shared by all other stacks.
 
+| Resource | Detail |
+|----------|--------|
+| VPC | `10.0.0.0/16`, 2 Availability Zones |
+| Public subnets | 2 public `/24` subnets — host the Bastion and NAT Gateway |
+| Private subnets | 2 private `/24` subnets — host the microservice EC2s |
+| NAT Gateway | 1 instance in AZ-1a, shared by all private subnets |
+| DynamoDB VPC Endpoint | Gateway type, free — keeps DynamoDB traffic inside the AWS network |
+| EC2 Key Pair | **Must be created manually in AWS Console before deploying** — imported by name `fbook-key` |
+| Security Groups | `sg-alb`, `sg-bastion`, `sg-microservice` |
 
-| Resource              | Detail                                                                      |
-| --------------------- | --------------------------------------------------------------------------- |
-| VPC                   | `10.0.0.0/16`, 2 Availability Zones                                         |
-| Public subnets        | 2 public `/24` subnets — host the Bastion and NAT Gateway                    |
-| Private subnets       | 2 private `/24` subnets — host the microservice EC2s                         |
-| NAT Gateway           | 1 instance in AZ-1a, shared by all private subnets                          |
-| DynamoDB VPC Endpoint | Gateway type, free — keeps DynamoDB traffic inside the AWS network          |
-| EC2 Key Pair          | Single RSA key for all instances; private key stored in SSM Parameter Store |
-| Security Groups       | `sg-alb`, `sg-bastion`, `sg-microservice`                                   |
+**Key pair requirement:** The CDK imports the key pair by name (`ec2.KeyPair.fromKeyPairName(..., 'fbook-key')`). The key must exist in AWS before `cdk deploy`. See the [README](./README.md#important--create-the-ec2-key-pair-manually-before-deploying) for creation steps.
 
+**Why a single VPC?** Separate VPCs per microservice would require VPC Peering, significantly increasing complexity and cost without meaningful benefit at this scale.
 
-The diagram shows representative `/24` subnet ranges for readability. In the CDK implementation, subnet CIDRs are assigned automatically from the `10.0.0.0/16` VPC using `cidrMask: 24`.
+**Why 2 AZs?** The Application Load Balancer requires at least 2 Availability Zones to operate.
 
-**Why a single VPC?** Separate VPCs per microservice would require VPC Peering, significantly increasing complexity and cost without meaningful benefit at this scale. A single VPC with well-defined security groups provides the same isolation guarantees.
-
-**Why 2 AZs?** The Application Load Balancer requires at least 2 Availability Zones to operate. This also lays the groundwork for high availability if the project scales.
-
-**Why 1 NAT Gateway instead of 2?** A NAT Gateway per AZ (~$32/month each) is the production recommendation for high availability. For an academic environment where stacks are destroyed after testing, one NAT Gateway cuts that cost in half with an acceptable trade-off: if AZ-1a fails, private subnets in AZ-1b lose outbound internet access.
+**Why 1 NAT Gateway instead of 2?** A NAT Gateway per AZ (~$32/month each) is the production recommendation. For an academic environment one NAT Gateway cuts that cost in half with an acceptable trade-off.
 
 **Why a DynamoDB VPC Gateway Endpoint?** Without it, traffic from EC2 instances to DynamoDB exits through the NAT Gateway and incurs data transfer charges. The Gateway Endpoint routes that traffic within the AWS backbone at no extra cost.
 
@@ -112,15 +107,15 @@ The diagram shows representative `/24` subnet ranges for readability. In the CDK
 
 ### 3. `FbookBastionStack` — Secure SSH Access
 
-A single `t2.micro` EC2 instance in a public subnet that acts as the only SSH entry point into the VPC.
+A single `t3.micro` EC2 instance in a public subnet that acts as the only SSH entry point into the VPC.
 
 ```
-Your machine  →(SSH)→  Bastion (public subnet)  →(SSH ProxyJump)→  Microservice EC2 (private subnet)
+Your machine → (SSH) → Bastion (public subnet) → (SSH ProxyJump) → Microservice EC2 (private subnet)
 ```
 
-**Why a Bastion instead of exposing EC2s directly?** Microservice EC2s have no public IP address and live in private subnets. The only way to reach port 22 on them is through the Bastion. This minimizes the attack surface: only one machine is exposed to the internet on port 22, and only for SSH.
+Configure `~/.ssh/config` with `IdentitiesOnly yes` on both the Bastion and `10.0.2.*` entries — this is required to force the correct key for both hops.
 
-**Why not AWS Systems Manager Session Manager?** SSM Session Manager is the modern, production-grade alternative (no open ports, audited sessions, no EC2 overhead). However, it requires either internet access from the EC2 (via NAT) or a VPC Interface Endpoint for SSM (~$7/month). The Bastion is simpler to understand and set up in an academic context.
+**Why a Bastion instead of exposing EC2s directly?** Microservice EC2s have no public IP address and live in private subnets. The only way to reach port 22 on them is through the Bastion.
 
 ---
 
@@ -128,57 +123,61 @@ Your machine  →(SSH)→  Bastion (public subnet)  →(SSH ProxyJump)→  Micro
 
 A single **Application Load Balancer** in the public subnets with an HTTP listener on port 80.
 
-Path-based routing rules distribute traffic to each microservice:
+| Path pattern | Target | Priority |
+|---|---|---|
+| `/v1/usuarios*` | Usuarios EC2 (10.0.2.10) | 10 |
+| `/v1/publicaciones*`, `/v1/comentarios*`, `/v1/reacciones*` | Publicacion EC2 (10.0.2.12) | 20 |
+| `/v1/amistades*` | Amistad EC2 (10.0.2.11) | 30 |
+| anything else | Fixed 404 JSON response | — |
 
+**Why one ALB instead of one per microservice?** A single ALB costs ~$22/month and handles all microservices via path-based routing rules.
 
-| Path pattern                                 | Target                        |
-| -------------------------------------------- | ----------------------------- |
-| `/api/publications` or `/api/publications/*` | Publication EC2 (priority 10) |
-| `/api/comments` or `/api/comments/*`         | Comment EC2 (priority 20)     |
-| `/api/friendships` or `/api/friendships/*`   | Friendship EC2 (priority 30)  |
-| anything else                                | Fixed 404 JSON response       |
-
-
-**Why one ALB instead of one per microservice?** A single ALB costs ~$22/month and handles all three microservices via path-based routing rules. Three separate ALBs would cost ~$66/month for no additional benefit at this scale.
-
-**Why ALB and not API Gateway?** API Gateway offers native Cognito JWT authorization, rate limiting, and caching — all valuable in production. However, connecting API Gateway to EC2 instances in private subnets requires a **VPC Link** (~$7/month, not in the free tier), making it more expensive for an academic setup. With ALB, JWT validation is the responsibility of each microservice (a single shared middleware against the Cognito JWKS URI is sufficient). API Gateway becomes the better choice when switching to Lambda-based microservices.
-
-**Why HTTP and not HTTPS?** HTTPS requires a custom domain registered in Route 53 and a certificate from ACM. For academic and testing purposes, HTTP on the ALB DNS name is sufficient. Enabling HTTPS later only requires adding an ACM certificate and changing the listener port to 443.
+**Why HTTP and not HTTPS?** HTTPS requires a custom domain and an ACM certificate. For academic and testing purposes, HTTP is sufficient.
 
 ---
 
-### 5–7. `FbookPublicationStack`, `FbookCommentStack`, `FbookFriendshipStack` — Microservices
+### 5–7. `FbookUsersStack`, `FbookAmistadStack`, `FbookPublicationStack` — Microservices
 
-Each microservice stack follows the same pattern and is fully independent:
+Each microservice stack follows the same pattern:
 
 ```
-EC2 t2.micro (private subnet)
-  └── IAM Role  →  DynamoDB table (read/write, scoped to its own table only)
-  └── systemd   →  placeholder HTTP server on :8080
-  └── ALB Target Group  →  registers with ALB listener rule
+EC2 t3.micro (private subnet, static private IP)
+  └── IAM Role → DynamoDB tables (read/write, scoped to its own tables)
+  └── IAM Role → ECR (pull Docker images)
+  └── Docker container → NestJS app on :3000
+  └── IMDSv2 hop limit = 2 (required for container to access IAM role)
+  └── ALB Target Group → registered with ALB listener rule
 ```
+
+#### Static private IPs
+
+| Microservice | IP | Port |
+|---|---|---|
+| Usuarios | `10.0.2.10` | 3000 |
+| Amistad | `10.0.2.11` | 3000 |
+| Publicacion | `10.0.2.12` | 3000 |
+
+Static IPs allow inter-service calls using hardcoded URLs in `/opt/fbook.env` without requiring service discovery.
 
 #### DynamoDB Table Design
 
+| Table | Partition Key | Stack |
+|---|---|---|
+| `Usuarios` | `id` (NUMBER) | FbookUsersStack |
+| `Amistades` | `id` (NUMBER) | FbookAmistadStack |
+| `Publicaciones` | `id` (NUMBER) | FbookPublicationStack |
+| `Comentarios` | `id` (NUMBER) | FbookPublicationStack |
+| `Reacciones` | `id` (NUMBER) | FbookPublicationStack |
 
-| Table               | Partition Key | Sort Key    | Notes                                                |
-| ------------------- | ------------- | ----------- | ---------------------------------------------------- |
-| `fbook-posts`       | `userId`      | `postId`    | GSI on `postId` for direct post lookup               |
-| `fbook-comments`    | `postId`      | `commentId` | Efficiently lists all comments for a post            |
-| `fbook-friendships` | `userId`      | `friendId`  | `status` attribute: `PENDING`, `ACCEPTED`, `BLOCKED` |
+#### DynamoDB credentials in containers
 
+Containers do **not** use `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY`. The AWS SDK discovers credentials automatically via **IMDSv2** (the EC2 IAM role). The `httpPutResponseHopLimit: 2` metadata option is required to allow the credential request to pass through the Docker network layer to the host.
 
-**Why DynamoDB?** It is serverless, scales to zero, and has a generous always-free tier (25 GB, 25 WCU, 25 RCU). It pairs naturally with microservices because each service owns its own table, there are no shared schemas, and there is no database server to manage or secure.
+**Why on-demand billing?** On-demand (pay-per-request) simplifies capacity planning and is effectively free under development/test load.
 
-**Why on-demand billing?** On-demand (pay-per-request) simplifies capacity planning and is effectively free under development/test load. Provisioned mode (25 WCU/RCU free tier) is the better choice only if traffic patterns are predictable and stable.
+**Why `removalPolicy: DESTROY`?** Since this environment is torn down after each test session (`cdk destroy --all`), `DESTROY` ensures a clean teardown.
 
-**Why `removalPolicy: DESTROY`?** Since this environment is torn down after each test session (`cdk destroy --all`), keeping tables around would leave orphaned resources. `DESTROY` ensures a clean teardown.
-
-**Why `t2.micro`?** It is the free-tier-eligible instance type (750 hours/month combined across all instances). Three instances running 8 hours/day stay within the free-tier budget. For production, `t3.small` or larger would be appropriate.
-
-**Why each EC2 has its own IAM Role scoped to one table?** This follows the principle of least privilege. The Publication EC2 can only read/write `fbook-posts`; it cannot touch `fbook-comments` or `fbook-friendships`. A compromised microservice cannot affect the data of the others.
-
-**Why a placeholder HTTP server?** The EC2 instances are ready to receive a real microservice deployment. The Python placeholder (running as a `systemd` service) keeps the ALB health checks passing until the actual application is deployed, avoiding unhealthy target group errors.
+**Why `t3.micro`?** It is a current-generation instance type with better price/performance than `t2.micro`. The free tier covers 750 hours/month across eligible Linux instances.
 
 ---
 
@@ -189,57 +188,69 @@ Internet
   │  :80
   ▼
 sg-alb
-  │  :8080  (only to sg-microservice)
+  │  :3000  (only to sg-microservice)
   ▼
 sg-microservice  ←── :22  ──  sg-bastion  ←── :22  ──  Internet
-  │
+  │  :3000  (inter-service calls, intra sg-microservice)
   ▼
 EC2 instances (no public IP, unreachable from internet)
-  │  (via NAT Gateway)
+  │  (via NAT Gateway → ECR pull at startup)
   ▼
 DynamoDB (via VPC Gateway Endpoint — stays in AWS network)
 ```
-
-No EC2 microservice is directly reachable from the internet. Traffic can only reach them through two paths:
-
-1. **Port 8080** — from the ALB (forwarding user HTTP requests)
-2. **Port 22** — from the Bastion (operator SSH access)
 
 ---
 
 ## Deployment Order
 
-CDK resolves inter-stack dependencies automatically based on the props passed between stacks. Cognito has no infrastructure dependency on the VPC and may be deployed independently. The logical dependency order for the networked resources is:
+CDK resolves inter-stack dependencies automatically. The logical order is:
 
 ```
-FbookCdkStack (Cognito)  [independent authentication stack]
+FbookCdkStack (Cognito — independent)
 
-FbookNetworkStack (VPC, SGs, Key Pair)
-    ↓              ↓
-FbookBastionStack  FbookAlbStack
-                       ↓          ↓          ↓
-              FbookPublicationStack  FbookCommentStack  FbookFriendshipStack
+FbookNetworkStack (VPC, SGs, key pair reference)
+    ↓                    ↓
+FbookBastionStack   FbookAlbStack
+                         ↓         ↓           ↓
+               FbookUsersStack  FbookAmistadStack  FbookPublicationStack
 ```
+
+### Pre-deploy checklist
+
+- [ ] AWS CLI configured (`aws sts get-caller-identity` succeeds)
+- [ ] CDK bootstrapped (`npx cdk bootstrap`)
+- [ ] Key pair **`fbook-key`** exists in AWS Console → EC2 → Key Pairs
+- [ ] `~/.ssh/fbook-key.pem` saved locally with `chmod 400`
+- [ ] Docker images pushed to ECR for all 3 microservices
 
 ### Deploy
 
 ```bash
-# Bootstrap the account/region once
-cdk bootstrap
+npx cdk deploy --all
+```
 
-# Deploy all stacks
-cdk deploy --all
+### SSH to a microservice (after deploy)
 
-# Retrieve the SSH private key after deployment
-aws ssm get-parameter \
-  --name /ec2/keypairs/fbook-key \
-  --with-decryption \
-  --query Parameter.Value \
-  --output text > fbook-key.pem
-chmod 400 fbook-key.pem
+Add to `~/.ssh/config` (substitute real Bastion IP):
 
-# SSH to a microservice EC2 via Bastion (jump host)
-ssh -i fbook-key.pem -J ec2-user@<BastionPublicIp> ec2-user@<PrivateEc2Ip>
+```
+Host fbook-bastion
+    HostName <BastionPublicIp>
+    User ec2-user
+    IdentityFile ~/.ssh/fbook-key.pem
+    IdentitiesOnly yes
+
+Host 10.0.2.*
+    User ec2-user
+    IdentityFile ~/.ssh/fbook-key.pem
+    IdentitiesOnly yes
+    ProxyJump fbook-bastion
+```
+
+```bash
+ssh 10.0.2.10   # Usuarios
+ssh 10.0.2.11   # Amistad
+ssh 10.0.2.12   # Publicacion
 ```
 
 ### Tear Down
@@ -248,38 +259,31 @@ ssh -i fbook-key.pem -J ec2-user@<BastionPublicIp> ec2-user@<PrivateEc2Ip>
 npx cdk destroy --all
 ```
 
-All resources are destroyed, including DynamoDB tables (`removalPolicy: DESTROY`), key pairs, NAT Gateways, and EC2 instances. No orphaned resources remain.
+All resources are destroyed including DynamoDB tables and EC2 instances. The manually-created `fbook-key` key pair is **not** deleted.
 
 ---
 
 ## Cost Estimate
 
-
-| Resource                                 | Monthly cost        | Notes                                                         |
-| ---------------------------------------- | ------------------- | ------------------------------------------------------------- |
-| NAT Gateway                              | ~$32                | Biggest cost driver; eliminated on `cdk destroy`              |
-| ALB                                      | ~$22                | Free tier: 750 hrs/month                                      |
-| EC2 t2.micro × 3                         | ~$0–17              | Free tier: 750 hrs/month total across eligible Linux instances |
-| Bastion t2.micro                         | Shares free tier    | Counts against the same 750 hrs/month pool                     |
-| DynamoDB                                 | ~$0                 | Always-free tier covers dev load                              |
-| VPC / IGW / SGs                          | $0                  | Always free                                                   |
-| ACM / Cognito                            | $0                  | Always free                                                   |
-| **Total (8 hrs/day usage)**              | **~$54/month**      |                                                               |
-| **Total (destroyed after each session)** | **~$0**             |                                                               |
-
+| Resource | Monthly cost | Notes |
+|---|---|---|
+| NAT Gateway | ~$32 | Biggest cost driver; eliminated on `cdk destroy` |
+| ALB | ~$22 | Free tier: 750 hrs/month |
+| EC2 t3.micro × 4 | ~$0–20 | Free tier: 750 hrs/month total |
+| DynamoDB | ~$0 | Always-free tier covers dev load |
+| VPC / IGW / SGs | $0 | Always free |
+| Cognito | $0 | Always free up to 50K MAUs |
+| **Total (destroyed after each session)** | **~$0** | |
 
 ---
 
 ## Future Improvements
 
-
-| Area              | Recommendation                                                                                          |
-| ----------------- | ------------------------------------------------------------------------------------------------------- |
-| HTTPS             | Add ACM certificate + Route 53 domain, change ALB listener to :443                                      |
-| Auth at the edge  | Move JWT validation to the ALB (Cognito OIDC auth action) or add an API Gateway + VPC Link              |
-| High availability | Add a second NAT Gateway in AZ-1b; place one EC2 per microservice in each AZ with an Auto Scaling Group |
-| Observability     | Add CloudWatch Log Groups, metric alarms, and X-Ray tracing to each EC2                                 |
-| CI/CD             | Add CodePipeline + CodeDeploy to automate microservice deployments to the EC2 instances                 |
-| Instance type     | Upgrade from `t2.micro` to `t3.small` for production workloads                                          |
-
-
+| Area | Recommendation |
+|---|---|
+| HTTPS | Add ACM certificate + Route 53 domain, change ALB listener to :443 |
+| Auth at the edge | Move JWT validation to the ALB (Cognito OIDC auth action) |
+| High availability | Add a second NAT Gateway in AZ-1b; Auto Scaling Groups per microservice |
+| Observability | CloudWatch Log Groups, metric alarms, X-Ray tracing |
+| CI/CD | CodePipeline + CodeDeploy to automate ECR push + container restart |
+| Service discovery | Replace static IPs with AWS Cloud Map or an internal ALB |
