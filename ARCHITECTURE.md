@@ -83,15 +83,17 @@ Provisions a **Cognito User Pool** configured as an OIDC Authorization Server.
 
 The networking foundation shared by all other stacks.
 
-| Resource | Detail |
-|----------|--------|
-| VPC | `10.0.0.0/16`, 2 Availability Zones |
-| Public subnets | 2 public `/24` subnets — host the Bastion and NAT Gateway |
-| Private subnets | 2 private `/24` subnets — host the microservice EC2s |
-| NAT Gateway | 1 instance in AZ-1a, shared by all private subnets |
-| DynamoDB VPC Endpoint | Gateway type, free — keeps DynamoDB traffic inside the AWS network |
-| EC2 Key Pair | **Must be created manually in AWS Console before deploying** — imported by name `fbook-key` |
-| Security Groups | `sg-alb`, `sg-bastion`, `sg-microservice` |
+
+| Resource              | Detail                                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------- |
+| VPC                   | `10.0.0.0/16`, 2 Availability Zones                                                         |
+| Public subnets        | 2 public `/24` subnets — host the Bastion and NAT Gateway                                   |
+| Private subnets       | 2 private `/24` subnets — host the microservice EC2s                                        |
+| NAT Gateway           | 1 instance in AZ-1a, shared by all private subnets                                          |
+| DynamoDB VPC Endpoint | Gateway type, free — keeps DynamoDB traffic inside the AWS network                          |
+| EC2 Key Pair          | **Must be created manually in AWS Console before deploying** — imported by name `fbook-key` |
+| Security Groups       | `sg-alb`, `sg-bastion`, `sg-microservice`                                                   |
+
 
 **Key pair requirement:** The CDK imports the key pair by name (`ec2.KeyPair.fromKeyPairName(..., 'fbook-key')`). The key must exist in AWS before `cdk deploy`. See the [README](./README.md#important--create-the-ec2-key-pair-manually-before-deploying) for creation steps.
 
@@ -123,12 +125,14 @@ Configure `~/.ssh/config` with `IdentitiesOnly yes` on both the Bastion and `10.
 
 A single **Application Load Balancer** in the public subnets with an HTTP listener on port 80.
 
-| Path pattern | Target | Priority |
-|---|---|---|
-| `/v1/usuarios*` | Usuarios EC2 (10.0.2.10) | 10 |
-| `/v1/publicaciones*`, `/v1/comentarios*`, `/v1/reacciones*` | Publicacion EC2 (10.0.2.12) | 20 |
-| `/v1/amistades*` | Amistad EC2 (10.0.2.11) | 30 |
-| anything else | Fixed 404 JSON response | — |
+
+| Path pattern                                                | Target                      | Priority |
+| ----------------------------------------------------------- | --------------------------- | -------- |
+| `/v1/usuarios`*                                             | Usuarios EC2 (10.0.2.10)    | 10       |
+| `/v1/publicaciones*`, `/v1/comentarios*`, `/v1/reacciones*` | Publicacion EC2 (10.0.2.12) | 20       |
+| `/v1/amistades*`                                            | Amistad EC2 (10.0.2.11)     | 30       |
+| anything else                                               | Fixed 404 JSON response     | —        |
+
 
 **Why one ALB instead of one per microservice?** A single ALB costs ~$22/month and handles all microservices via path-based routing rules.
 
@@ -151,33 +155,27 @@ EC2 t3.micro (private subnet, static private IP)
 
 #### Static private IPs
 
-| Microservice | IP | Port |
-|---|---|---|
-| Usuarios | `10.0.2.10` | 3000 |
-| Amistad | `10.0.2.11` | 3000 |
-| Publicacion | `10.0.2.12` | 3000 |
+
+| Microservice | IP          | Port |
+| ------------ | ----------- | ---- |
+| Usuarios     | `10.0.2.10` | 3000 |
+| Amistad      | `10.0.2.11` | 3000 |
+| Publicacion  | `10.0.2.12` | 3000 |
+
 
 Static IPs allow inter-service calls using hardcoded URLs in `/opt/fbook.env` without requiring service discovery.
 
 #### DynamoDB Table Design
 
-| Table | Partition Key | Stack |
-|---|---|---|
-| `Usuarios` | `id` (NUMBER) | FbookUsersStack |
-| `Amistades` | `id` (NUMBER) | FbookAmistadStack |
+
+| Table           | Partition Key | Stack                 |
+| --------------- | ------------- | --------------------- |
+| `Usuarios`      | `id` (NUMBER) | FbookUsersStack       |
+| `Amistades`     | `id` (NUMBER) | FbookAmistadStack     |
 | `Publicaciones` | `id` (NUMBER) | FbookPublicationStack |
-| `Comentarios` | `id` (NUMBER) | FbookPublicationStack |
-| `Reacciones` | `id` (NUMBER) | FbookPublicationStack |
+| `Comentarios`   | `id` (NUMBER) | FbookPublicationStack |
+| `Reacciones`    | `id` (NUMBER) | FbookPublicationStack |
 
-#### DynamoDB credentials in containers
-
-Containers do **not** use `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY`. The AWS SDK discovers credentials automatically via **IMDSv2** (the EC2 IAM role). The `httpPutResponseHopLimit: 2` metadata option is required to allow the credential request to pass through the Docker network layer to the host.
-
-**Why on-demand billing?** On-demand (pay-per-request) simplifies capacity planning and is effectively free under development/test load.
-
-**Why `removalPolicy: DESTROY`?** Since this environment is torn down after each test session (`cdk destroy --all`), `DESTROY` ensures a clean teardown.
-
-**Why `t3.micro`?** It is a current-generation instance type with better price/performance than `t2.micro`. The free tier covers 750 hours/month across eligible Linux instances.
 
 ---
 
@@ -217,11 +215,11 @@ FbookBastionStack   FbookAlbStack
 
 ### Pre-deploy checklist
 
-- [ ] AWS CLI configured (`aws sts get-caller-identity` succeeds)
-- [ ] CDK bootstrapped (`npx cdk bootstrap`)
-- [ ] Key pair **`fbook-key`** exists in AWS Console → EC2 → Key Pairs
-- [ ] `~/.ssh/fbook-key.pem` saved locally with `chmod 400`
-- [ ] Docker images pushed to ECR for all 3 microservices
+- AWS CLI configured (`aws sts get-caller-identity` succeeds)
+- CDK bootstrapped (`npx cdk bootstrap`)
+- Key pair `**fbook-key**` exists in AWS Console → EC2 → Key Pairs
+- `~/.ssh/fbook-key.pem` saved locally with `chmod 400`
+- Docker images pushed to ECR for all 3 microservices
 
 ### Deploy
 
@@ -265,25 +263,17 @@ All resources are destroyed including DynamoDB tables and EC2 instances. The man
 
 ## Cost Estimate
 
-| Resource | Monthly cost | Notes |
-|---|---|---|
-| NAT Gateway | ~$32 | Biggest cost driver; eliminated on `cdk destroy` |
-| ALB | ~$22 | Free tier: 750 hrs/month |
-| EC2 t3.micro × 4 | ~$0–20 | Free tier: 750 hrs/month total |
-| DynamoDB | ~$0 | Always-free tier covers dev load |
-| VPC / IGW / SGs | $0 | Always free |
-| Cognito | $0 | Always free up to 50K MAUs |
-| **Total (destroyed after each session)** | **~$0** | |
+
+| Resource                                 | Monthly cost | Notes                                            |
+| ---------------------------------------- | ------------ | ------------------------------------------------ |
+| NAT Gateway                              | ~$32         | Biggest cost driver; eliminated on `cdk destroy` |
+| ALB                                      | ~$22         | Free tier: 750 hrs/month                         |
+| EC2 t3.micro × 4                         | ~$0–20       | Free tier: 750 hrs/month total                   |
+| DynamoDB                                 | ~$0          | Always-free tier covers dev load                 |
+| VPC / IGW / SGs                          | $0           | Always free                                      |
+| Cognito                                  | $0           | Always free up to 50K MAUs                       |
+| **Total (destroyed after each session)** | **~$0**      |                                                  |
+
 
 ---
 
-## Future Improvements
-
-| Area | Recommendation |
-|---|---|
-| HTTPS | Add ACM certificate + Route 53 domain, change ALB listener to :443 |
-| Auth at the edge | Move JWT validation to the ALB (Cognito OIDC auth action) |
-| High availability | Add a second NAT Gateway in AZ-1b; Auto Scaling Groups per microservice |
-| Observability | CloudWatch Log Groups, metric alarms, X-Ray tracing |
-| CI/CD | CodePipeline + CodeDeploy to automate ECR push + container restart |
-| Service discovery | Replace static IPs with AWS Cloud Map or an internal ALB |
