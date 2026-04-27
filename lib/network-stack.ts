@@ -7,7 +7,7 @@ export class NetworkStack extends cdk.Stack {
   readonly sgAlb: ec2.SecurityGroup;
   readonly sgBastion: ec2.SecurityGroup;
   readonly sgMicroservice: ec2.SecurityGroup;
-  readonly keyPair: ec2.KeyPair;
+  readonly keyPair: ec2.IKeyPair;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -35,12 +35,8 @@ export class NetworkStack extends cdk.Stack {
       service: ec2.GatewayVpcEndpointAwsService.DYNAMODB,
     });
 
-    // Key pair (Bastion + microservicios)
-    this.keyPair = new ec2.KeyPair(this, 'FbookKeyPair', {
-      keyPairName: 'fbook-key',
-      type: ec2.KeyPairType.RSA,
-      format: ec2.KeyPairFormat.PEM,
-    });
+    // Importa el key pair existente (creado manualmente desde consola AWS)
+    this.keyPair = ec2.KeyPair.fromKeyPairName(this, 'FbookKeyPair', 'fbook-key');
 
     // Security Groups
     this.sgAlb = new ec2.SecurityGroup(this, 'SgAlb', {
@@ -69,16 +65,9 @@ export class NetworkStack extends cdk.Stack {
     // Allow the ALB to reach the microservices
     this.sgAlb.addEgressRule(this.sgMicroservice, ec2.Port.tcp(3000), 'To microservices');
 
-    new cdk.CfnOutput(this, 'KeyPairSsmCommand', {
-      value: [
-        'aws ssm get-parameter',
-        '--name /ec2/keypairs/fbook-key',
-        '--with-decryption',
-        '--query Parameter.Value',
-        '--output text > fbook-key.pem',
-        '&& chmod 400 fbook-key.pem',
-      ].join(' '),
-      description: 'Execute to download the private SSH key',
+    new cdk.CfnOutput(this, 'KeyPairNote', {
+      value: 'fbook-key fue creado manualmente. Usa el .pem descargado desde la consola AWS para SSH.',
+      description: 'Key pair info',
     });
   }
 }

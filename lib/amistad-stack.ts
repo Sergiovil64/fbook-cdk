@@ -33,6 +33,7 @@ export class AmistadStack extends cdk.Stack {
     // ── User Data ─────────────────────────────────────────────────────────────
     const userData = ec2.UserData.forLinux();
     userData.addCommands(
+      'echo "keypair=fbook-key-manual" > /opt/fbook-version',
       'dnf update -y',
       'dnf install -y docker',
       'systemctl enable docker',
@@ -61,12 +62,13 @@ export class AmistadStack extends cdk.Stack {
     const instance = new ec2.Instance(this, 'AmistadEc2', {
       vpc: props.network.vpc,
       vpcSubnets: { subnets: [privateSubnet] },
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T2, ec2.InstanceSize.MICRO),
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MICRO),
       machineImage: ec2.MachineImage.latestAmazonLinux2023(),
       securityGroup: props.network.sgMicroservice,
       keyPair: props.network.keyPair,
       privateIpAddress: '10.0.2.11',
       userData,
+      userDataCausesReplacement: true,
     });
 
     // Hop limit 2: necesario para que el contenedor Docker acceda al IAM role via IMDSv2
@@ -88,7 +90,7 @@ export class AmistadStack extends cdk.Stack {
       protocol: elbv2.ApplicationProtocol.HTTP,
       targets: [new targets.InstanceTarget(instance, 3000)],
       healthCheck: {
-        path: '/',
+        path: '/v1/amistades',
         healthyHttpCodes: '200',
         interval: cdk.Duration.seconds(30),
         timeout: cdk.Duration.seconds(5),

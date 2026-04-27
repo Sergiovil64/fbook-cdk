@@ -13,14 +13,19 @@ export class BastionStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: BastionStackProps) {
     super(scope, id, props);
 
+    const userData = ec2.UserData.forLinux();
+    userData.addCommands('echo "keypair=fbook-key-manual" > /opt/fbook-version');
+
     this.instance = new ec2.Instance(this, 'Bastion', {
       vpc: props.network.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T2, ec2.InstanceSize.MICRO),
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MICRO),
       machineImage: ec2.MachineImage.latestAmazonLinux2023(),
       securityGroup: props.network.sgBastion,
       keyPair: props.network.keyPair,
       associatePublicIpAddress: true,
+      userData,
+      userDataCausesReplacement: true,
     });
 
     // Outputs
