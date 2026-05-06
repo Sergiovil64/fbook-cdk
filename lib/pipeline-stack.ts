@@ -54,7 +54,7 @@ export class PipelineStack extends cdk.Stack {
         resources: ['*'],
       }));
 
-      // ── Deploy project (SSM Run Command al EC2 target) ─────────────────────
+      // ── Deploy project (aws ecs update-service --force-new-deployment) ─────
       const deployProject = new codebuild.PipelineProject(this, `${svc}DeployProject`, {
         projectName: `fbook-deploy-${svc}`,
         environment: {
@@ -62,50 +62,22 @@ export class PipelineStack extends cdk.Stack {
           computeType: codebuild.ComputeType.SMALL,
         },
         environmentVariables: {
-          AWS_REGION: { value: this.region },
-          AWS_ACCOUNT_ID: { value: this.account },
-          SERVICE: { value: svc },
-          REPO_URI: { value: repo.repositoryUri },
-          LOG_GROUP: { value: `/fbook/${svc}` },
+          AWS_REGION:   { value: this.region },
+          CLUSTER_NAME: { value: 'fbook-cluster' },
+          SERVICE_NAME: { value: `fbook-service-${svc}` },
         },
         buildSpec: codebuild.BuildSpec.fromObject({
           version: '0.2',
           phases: {
             build: {
               commands: [
-                'echo "Deploying $SERVICE version $(cat image-info.json | jq -r .version)"',
-                'VERSION=$(cat image-info.json | jq -r .version)',
-                // El comando que SSM ejecuta dentro del EC2:
-                'cat > /tmp/deploy.sh <<EOF',
-                '#!/bin/bash',
-                'set -e',
-                'aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com',
-                'docker pull ${REPO_URI}:${VERSION}',
-                'docker rm -f fbook-svc || true',
-                'docker run -d --name fbook-svc --restart always \\',
-                '  --log-driver=awslogs \\',
-                '  --log-opt awslogs-region=${AWS_REGION} \\',
-                '  --log-opt awslogs-group=${LOG_GROUP} \\',
-                '  --log-opt awslogs-stream-prefix=ec2 \\',
-                '  -p 3000:3000 --env-file /opt/fbook.env \\',
-                '  ${REPO_URI}:${VERSION}',
-                'EOF',
-                // Sustituir variables locales del CodeBuild en el script
-                'envsubst < /tmp/deploy.sh > /tmp/deploy.final.sh',
-                'CMDS=$(jq -Rs . /tmp/deploy.final.sh)',
-                // Mandar el script al EC2 con el tag Service=<svc>
-                'CMD_ID=$(aws ssm send-command \\',
-                '  --document-name "AWS-RunShellScript" \\',
-                '  --targets "Key=tag:Service,Values=${SERVICE}" \\',
-                '  --parameters commands="[${CMDS}]" \\',
-                '  --comment "Deploy ${SERVICE}:${VERSION}" \\',
-                '  --query "Command.CommandId" --output text)',
-                'echo "Sent SSM command: $CMD_ID"',
-                // Esperar que termine
-                'INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=tag:Service,Values=${SERVICE}" "Name=instance-state-name,Values=running" --query "Reservations[0].Instances[0].InstanceId" --output text)',
-                'echo "Waiting for SSM command on $INSTANCE_ID..."',
-                'aws ssm wait command-executed --command-id $CMD_ID --instance-id $INSTANCE_ID',
-                'aws ssm get-command-invocation --command-id $CMD_ID --instance-id $INSTANCE_ID --query "Status" --output text',
+                'VERSION=$(jq -r .version image-info.json)',
+                'echo "Forcing new deployment of $SERVICE_NAME on $CLUSTER_NAME (image version $VERSION)"',
+                // El service apunta a ":latest". Build ya pusheó :latest al digest nuevo;
+                // --force-new-deployment hace que ECS pull el digest actual y haga rollout blue-green natural.
+                'aws ecs update-service --cluster $CLUSTER_NAME --service $SERVICE_NAME --force-new-deployment --region $AWS_REGION',
+                'aws ecs wait services-stable --cluster $CLUSTER_NAME --services $SERVICE_NAME --region $AWS_REGION',
+                'echo "Deploy completed."',
               ],
             },
           },
@@ -113,12 +85,18 @@ export class PipelineStack extends cdk.Stack {
       });
       deployProject.addToRolePolicy(new iam.PolicyStatement({
         actions: [
-          'ssm:SendCommand',
-          'ssm:GetCommandInvocation',
-          'ssm:DescribeInstanceInformation',
-          'ec2:DescribeInstances',
+          'ecs:UpdateService',
+          'ecs:DescribeServices',
+          'ecs:DescribeTasks',
+          'ecs:ListTasks',
         ],
         resources: ['*'],
+      }));
+      // PassRole para que update-service pueda re-asociar TaskRole/ExecutionRole de la TaskDef
+      deployProject.addToRolePolicy(new iam.PolicyStatement({
+        actions: ['iam:PassRole'],
+        resources: ['*'],
+        conditions: { StringEquals: { 'iam:PassedToService': 'ecs-tasks.amazonaws.com' } },
       }));
 
       // ── Pipeline ───────────────────────────────────────────────────────────
@@ -139,6 +117,9 @@ export class PipelineStack extends cdk.Stack {
             output: sourceArtifact,
             // No queremos disparar en cada push; el trigger real es por tag (EventBridge rule abajo)
             triggerOnPush: false,
+            // Full git clone en CodeBuild para que `git describe --exact-match --tags HEAD`
+            // pueda derivar la versión del tag dentro del buildspec.
+            codeBuildCloneOutput: true,
           }),
         ],
       });
@@ -159,7 +140,7 @@ export class PipelineStack extends cdk.Stack {
         stageName: 'Deploy',
         actions: [
           new cpactions.CodeBuildAction({
-            actionName: 'SSM_Deploy_To_EC2',
+            actionName: 'Ecs_Update_Service',
             project: deployProject,
             input: buildArtifact,
           }),

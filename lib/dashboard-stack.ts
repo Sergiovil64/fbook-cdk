@@ -14,10 +14,12 @@ interface DashboardStackProps extends cdk.StackProps {
 }
 
 const SERVICES = [
-  { name: 'usuario',     logGroup: '/fbook/usuario',     emfNamespace: 'Fbook/Usuario' },
-  { name: 'amistad',     logGroup: '/fbook/amistad',     emfNamespace: 'Fbook/Amistad' },
-  { name: 'publicacion', logGroup: '/fbook/publicacion', emfNamespace: 'Fbook/Publicacion' },
+  { name: 'usuario',     logGroup: '/ecs/fbook-usuario',     emfNamespace: 'Fbook/Usuario' },
+  { name: 'amistad',     logGroup: '/ecs/fbook-amistad',     emfNamespace: 'Fbook/Amistad' },
+  { name: 'publicacion', logGroup: '/ecs/fbook-publicacion', emfNamespace: 'Fbook/Publicacion' },
 ];
+
+const CLUSTER_NAME = 'fbook-cluster';
 
 export class DashboardStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: DashboardStackProps) {
@@ -43,7 +45,7 @@ export class DashboardStack extends cdk.Stack {
       })),
     );
 
-    // ── Row 2: Latencia EMF p50/p99 por servicio ────────────────────────────
+    // ── Row 2: Latencia EMF p50/p99 + throughput/errores ────────────────────
     dashboard.addWidgets(
       new cloudwatch.GraphWidget({
         title: 'Latencia request (p50 / p99)',
@@ -91,38 +93,38 @@ export class DashboardStack extends cdk.Stack {
       }),
     );
 
-    // ── Row 3: EC2 health (CPU + Status check) ──────────────────────────────
-    const instances = [
-      { name: 'usuario',     instance: props.users.instance },
-      { name: 'amistad',     instance: props.amistad.instance },
-      { name: 'publicacion', instance: props.publication.instance },
-    ];
+    // ── Row 3: ECS service health (CPU + Memory) ────────────────────────────
+    const ecsServices = SERVICES.map(svc => ({
+      name: svc.name,
+      dims: { ClusterName: CLUSTER_NAME, ServiceName: `fbook-service-${svc.name}` },
+    }));
 
     dashboard.addWidgets(
       new cloudwatch.GraphWidget({
-        title: 'EC2 — CPU Utilization (%)',
-        left: instances.map(i => new cloudwatch.Metric({
-          namespace: 'AWS/EC2',
+        title: 'ECS — CPU Utilization (%)',
+        left: ecsServices.map(s => new cloudwatch.Metric({
+          namespace: 'AWS/ECS',
           metricName: 'CPUUtilization',
-          dimensionsMap: { InstanceId: i.instance.instanceId },
+          dimensionsMap: s.dims,
           statistic: 'Average',
-          label: i.name,
-          period: cdk.Duration.minutes(5),
+          label: s.name,
+          period: cdk.Duration.minutes(1),
         })),
         leftYAxis: { min: 0, max: 100, showUnits: false },
         width: 12,
         height: 6,
       }),
       new cloudwatch.GraphWidget({
-        title: 'EC2 — Status Check Failed',
-        left: instances.map(i => new cloudwatch.Metric({
-          namespace: 'AWS/EC2',
-          metricName: 'StatusCheckFailed',
-          dimensionsMap: { InstanceId: i.instance.instanceId },
-          statistic: 'Maximum',
-          label: i.name,
+        title: 'ECS — Memory Utilization (%)',
+        left: ecsServices.map(s => new cloudwatch.Metric({
+          namespace: 'AWS/ECS',
+          metricName: 'MemoryUtilization',
+          dimensionsMap: s.dims,
+          statistic: 'Average',
+          label: s.name,
           period: cdk.Duration.minutes(1),
         })),
+        leftYAxis: { min: 0, max: 100, showUnits: false },
         width: 12,
         height: 6,
       }),
