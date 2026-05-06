@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project provisions the AWS infrastructure for **Fbook**, a Facebook-like social network clone, using AWS CDK (TypeScript). The system is composed of three independent NestJS microservices — Usuarios, Amistad, and Publicaciones — each running as a Docker container on its own EC2 instance and backed by dedicated DynamoDB tables.
+This project provisions the AWS infrastructure for **Fbook**, a Facebook-like social network clone, using AWS CDK (TypeScript). The system is composed of three independent NestJS microservices — Usuarios, Amistad, and Publicaciones — each running as an ECS Fargate service backed by dedicated DynamoDB tables.
 
 Authentication is handled by a Cognito User Pool acting as a fully compliant OIDC Authorization Server (Authorization Code Flow + PKCE).
 
@@ -22,43 +22,47 @@ Authentication is handled by a Cognito User Pool acting as a fully compliant OID
             │                                              │
             │  PUBLIC SUBNETS                              │
             │  ┌────────────────────────────────────────┐  │
-            │  │ AZ-1a (10.0.0.0/24)                   │  │
-            │  │  ┌──────────────┐  ┌───────────────┐  │  │
-            │  │  │    Bastion   │  │  NAT Gateway  │  │  │
-            │  │  │   t3.micro   │  │               │  │  │
-            │  │  └──────────────┘  └───────────────┘  │  │
+            │  │  NAT Gateway (AZ-1a)                   │  │
+            │  │  ALB — spans AZ-1a + AZ-1b, HTTP :80   │  │
+            │  │    /v1/usuarios*      → TG-Usuarios     │  │
+            │  │    /v1/amistades*     → TG-Amistad      │  │
+            │  │    /v1/publicaciones* → TG-Publicacion  │  │
+            │  │    /v1/comentarios*   → TG-Publicacion  │  │
+            │  │    /v1/reacciones*    → TG-Publicacion  │  │
+            │  └──────────────────┬─────────────────────┘  │
+            │                     │                        │
+            │  PRIVATE SUBNETS    │  (sg-ecs)              │
+            │  ┌──────────────────▼─────────────────────┐  │
+            │  │  ECS Cluster: fbook-cluster (Fargate)  │  │
             │  │                                        │  │
-            │  │ AZ-1b (10.0.1.0/24)  [HA for ALB]    │  │
+            │  │  fbook-service-usuario   (3 tasks :3000│  │
+            │  │  fbook-service-amistad   (3 tasks :3000│  │
+            │  │  fbook-service-publicacion(3 tasks:3000│  │
+            │  │                                        │  │
+            │  │  Cloud Map fbook.local                 │  │
+            │  │    usuario.fbook.local                 │  │
+            │  │    publicacion.fbook.local             │  │
             │  └────────────────────────────────────────┘  │
-            │                                              │
-            │  ┌──────────────────── ALB ───────────────┐  │
-            │  │   (spans AZ-1a + AZ-1b, HTTP :80)      │  │
-            │  │   /v1/usuarios*      → TG-Usuarios      │  │
-            │  │   /v1/publicaciones* → TG-Publicacion   │  │
-            │  │   /v1/comentarios*   → TG-Publicacion   │  │
-            │  │   /v1/reacciones*    → TG-Publicacion   │  │
-            │  │   /v1/amistades*     → TG-Amistad       │  │
-            │  └──────────┬──────────────┬──────────────┘  │
-            │             │              │                  │
-            │  PRIVATE SUBNET (10.0.2.0/24)                │
-            │  ┌──────────────────────────────────────┐    │
-            │  │  EC2 Usuarios     10.0.2.10  :3000   │    │
-            │  │  EC2 Amistad      10.0.2.11  :3000   │    │
-            │  │  EC2 Publicacion  10.0.2.12  :3000   │    │
-            │  │  (all t3.micro — Docker containers)  │    │
-            │  └──────────────────────────────────────┘    │
             │                                              │
             │  VPC Gateway Endpoint  (DynamoDB — free)     │
             └──────────────────────────────────────────────┘
-                    │         │         │         │
-               Usuarios  Amistades Publicaciones Comentarios
-               (DynamoDB)(DynamoDB) (DynamoDB)  (DynamoDB)
-                                                    │
-                                               Reacciones
-                                               (DynamoDB)
-
+                    │            │              │
+               Usuarios      Amistades    Publicaciones
+               (DynamoDB)   (DynamoDB)    Comentarios
+                                          Reacciones
+                                          (DynamoDB x3)
 
   Cognito User Pool (OIDC / PKCE)  ←  separate managed stack
+
+  ECR Repositories (managed by CDK)
+    fbook-service-usuario
+    fbook-service-amistad
+    fbook-service-publicacion
+
+  CloudWatch Log Groups
+    /ecs/fbook-usuario
+    /ecs/fbook-amistad
+    /ecs/fbook-publicacion
 ```
 
 ---
@@ -73,9 +77,9 @@ Provisions a **Cognito User Pool** configured as an OIDC Authorization Server.
 
 - Authorization Code Flow with PKCE (RFC 7636) — no client secret stored in the browser
 - Exports all OIDC endpoints (issuer, JWKS URI, authorize, token, userinfo) as CloudFormation outputs
-- Consumed by frontend apps and can be used by microservices to validate JWT tokens via the JWKS URI
+- Consumed by frontend apps and used by microservices to validate JWT tokens via the JWKS URI
 
-**Why Cognito?** It is a fully managed service with a generous always-free tier (50,000 MAUs). It eliminates the need to build and maintain authentication logic, and its OIDC compliance makes it easy to integrate with any standard library.
+**Why Cognito?** Fully managed service with a generous always-free tier (50,000 MAUs). Eliminates the need to build authentication logic and its OIDC compliance makes it easy to integrate with any standard library.
 
 ---
 
@@ -83,41 +87,40 @@ Provisions a **Cognito User Pool** configured as an OIDC Authorization Server.
 
 The networking foundation shared by all other stacks.
 
-
-| Resource              | Detail                                                                                      |
-| --------------------- | ------------------------------------------------------------------------------------------- |
-| VPC                   | `10.0.0.0/16`, 2 Availability Zones                                                         |
-| Public subnets        | 2 public `/24` subnets — host the Bastion and NAT Gateway                                   |
-| Private subnets       | 2 private `/24` subnets — host the microservice EC2s                                        |
-| NAT Gateway           | 1 instance in AZ-1a, shared by all private subnets                                          |
-| DynamoDB VPC Endpoint | Gateway type, free — keeps DynamoDB traffic inside the AWS network                          |
-| EC2 Key Pair          | **Must be created manually in AWS Console before deploying** — imported by name `fbook-key` |
-| Security Groups       | `sg-alb`, `sg-bastion`, `sg-microservice`                                                   |
-
-
-**Key pair requirement:** The CDK imports the key pair by name (`ec2.KeyPair.fromKeyPairName(..., 'fbook-key')`). The key must exist in AWS before `cdk deploy`. See the [README](./README.md#important--create-the-ec2-key-pair-manually-before-deploying) for creation steps.
-
-**Why a single VPC?** Separate VPCs per microservice would require VPC Peering, significantly increasing complexity and cost without meaningful benefit at this scale.
+| Resource              | Detail                                                                         |
+| --------------------- | ------------------------------------------------------------------------------ |
+| VPC                   | `10.0.0.0/16`, 2 Availability Zones                                            |
+| Public subnets        | 2 public `/24` subnets — host the ALB and NAT Gateway                          |
+| Private subnets       | 2 private `/24` subnets — host the ECS Fargate tasks                           |
+| NAT Gateway           | 1 instance in AZ-1a — allows tasks to pull from ECR and write to CloudWatch    |
+| DynamoDB VPC Endpoint | Gateway type, free — keeps DynamoDB traffic inside the AWS network             |
+| Security Groups       | `sg-alb` (inbound :80 from internet), `sg-ecs` (inbound :3000 from ALB + self) |
 
 **Why 2 AZs?** The Application Load Balancer requires at least 2 Availability Zones to operate.
 
-**Why 1 NAT Gateway instead of 2?** A NAT Gateway per AZ (~$32/month each) is the production recommendation. For an academic environment one NAT Gateway cuts that cost in half with an acceptable trade-off.
+**Why 1 NAT Gateway?** A NAT Gateway per AZ (~$32/month each) is the production recommendation. For an academic environment one NAT Gateway cuts that cost in half with an acceptable trade-off.
 
-**Why a DynamoDB VPC Gateway Endpoint?** Without it, traffic from EC2 instances to DynamoDB exits through the NAT Gateway and incurs data transfer charges. The Gateway Endpoint routes that traffic within the AWS backbone at no extra cost.
+**Why a DynamoDB VPC Gateway Endpoint?** Without it, traffic from ECS tasks to DynamoDB exits through the NAT Gateway and incurs data transfer charges. The Gateway Endpoint routes that traffic within the AWS backbone at no extra cost.
 
 ---
 
-### 3. `FbookBastionStack` — Secure SSH Access
+### 3. `FbookClusterStack` — ECS Cluster, ECR & Shared Resources
 
-A single `t3.micro` EC2 instance in a public subnet that acts as the only SSH entry point into the VPC.
+Central stack that provides shared resources to all service stacks.
 
-```
-Your machine → (SSH) → Bastion (public subnet) → (SSH ProxyJump) → Microservice EC2 (private subnet)
-```
+| Resource              | Detail                                                                          |
+| --------------------- | ------------------------------------------------------------------------------- |
+| ECS Cluster           | `fbook-cluster` — Fargate launch type                                           |
+| Cloud Map namespace   | `fbook.local` — private DNS for inter-service communication                     |
+| ECR Repositories      | `fbook-service-usuario/amistad/publicacion` — `removalPolicy: RETAIN`           |
+| CloudWatch Log Groups | `/ecs/fbook-usuario/amistad/publicacion` — here to avoid circular dependencies  |
+| Task Execution Role   | Shared IAM role — allows ECS to pull from ECR and write to CloudWatch           |
 
-Configure `~/.ssh/config` with `IdentitiesOnly yes` on both the Bastion and `10.0.2.*` entries — this is required to force the correct key for both hops.
+**Why log groups here and not in each service stack?**
+CDK automatically grants the Task Execution Role write access to any log group passed to `ecs.LogDrivers.awsLogs({ logGroup })`. If the log groups lived in the service stacks and the execution role in ClusterStack, CDK would create a circular dependency (ClusterStack → ServiceStack → ClusterStack). Placing log groups here keeps the dependency unidirectional.
 
-**Why a Bastion instead of exposing EC2s directly?** Microservice EC2s have no public IP address and live in private subnets. The only way to reach port 22 on them is through the Bastion.
+**Why `removalPolicy: RETAIN` for ECR?**
+ECR repositories contain the Docker images. Destroying the stack should not delete production images accidentally.
 
 ---
 
@@ -125,16 +128,16 @@ Configure `~/.ssh/config` with `IdentitiesOnly yes` on both the Bastion and `10.
 
 A single **Application Load Balancer** in the public subnets with an HTTP listener on port 80.
 
+| Path pattern          | Target                   | Priority |
+| --------------------- | ------------------------ | -------- |
+| `/v1/usuarios*`       | TG-Usuarios (IP type)    | 10       |
+| `/v1/amistades*`      | TG-Amistad (IP type)     | 20       |
+| `/v1/publicaciones*`  | TG-Publicacion (IP type) | 30       |
+| `/v1/comentarios*`    | TG-Publicacion (IP type) | 40       |
+| `/v1/reacciones*`     | TG-Publicacion (IP type) | 50       |
+| anything else         | Fixed 404 JSON response  | —        |
 
-| Path pattern                                                | Target                      | Priority |
-| ----------------------------------------------------------- | --------------------------- | -------- |
-| `/v1/usuarios`*                                             | Usuarios EC2 (10.0.2.10)    | 10       |
-| `/v1/publicaciones*`, `/v1/comentarios*`, `/v1/reacciones*` | Publicacion EC2 (10.0.2.12) | 20       |
-| `/v1/amistades*`                                            | Amistad EC2 (10.0.2.11)     | 30       |
-| anything else                                               | Fixed 404 JSON response     | —        |
-
-
-**Why one ALB instead of one per microservice?** A single ALB costs ~$22/month and handles all microservices via path-based routing rules.
+**Why target type IP?** Fargate tasks have no EC2 instance ID. The ALB registers tasks directly by their private IP address, so target type must be `IP` (not `INSTANCE`).
 
 **Why HTTP and not HTTPS?** HTTPS requires a custom domain and an ACM certificate. For academic and testing purposes, HTTP is sufficient.
 
@@ -145,37 +148,44 @@ A single **Application Load Balancer** in the public subnets with an HTTP listen
 Each microservice stack follows the same pattern:
 
 ```
-EC2 t3.micro (private subnet, static private IP)
-  └── IAM Role → DynamoDB tables (read/write, scoped to its own tables)
-  └── IAM Role → ECR (pull Docker images)
-  └── Docker container → NestJS app on :3000
-  └── IMDSv2 hop limit = 2 (required for container to access IAM role)
-  └── ALB Target Group → registered with ALB listener rule
+FargateTaskDefinition (256 CPU, 512 MB)
+  └── Task Execution Role  → pull from ECR, write CloudWatch logs
+  └── Task Role (per service) → DynamoDB access scoped to own tables only
+  └── Container: NestJS app on :3000
+       └── Health check: node -e "require('http').get('/health', ...)"
+       └── Environment variables injected by CDK (no .env files)
+
+FargateService
+  └── desiredCount: 3
+  └── Private subnets, no public IP
+  └── Cloud Map registration (auto-registers task IP on startup)
+  └── Target Group registration (ALB routes traffic to healthy tasks)
+
+Auto Scaling
+  └── min: 3 / max: 6
+  └── CPU target: 70%
+  └── Memory target: 70%
 ```
 
-#### Static private IPs
+#### Inter-service communication
 
+Services communicate via Cloud Map DNS — no hardcoded IPs:
 
-| Microservice | IP          | Port |
-| ------------ | ----------- | ---- |
-| Usuarios     | `10.0.2.10` | 3000 |
-| Amistad      | `10.0.2.11` | 3000 |
-| Publicacion  | `10.0.2.12` | 3000 |
+| From service  | Calls                        | Resolved by Cloud Map to       |
+| ------------- | ---------------------------- | ------------------------------ |
+| amistad       | `http://usuario.fbook.local` | private IP of a usuario task   |
+| publicacion   | `http://usuario.fbook.local` | private IP of a usuario task   |
+| publicacion   | `http://publicacion.fbook.local` | private IP of a publicacion task |
 
+#### DynamoDB — IAM isolation per service
 
-Static IPs allow inter-service calls using hardcoded URLs in `/opt/fbook.env` without requiring service discovery.
-
-#### DynamoDB Table Design
-
-
-| Table           | Partition Key | Stack                 |
-| --------------- | ------------- | --------------------- |
-| `Usuarios`      | `id` (NUMBER) | FbookUsersStack       |
-| `Amistades`     | `id` (NUMBER) | FbookAmistadStack     |
-| `Publicaciones` | `id` (NUMBER) | FbookPublicationStack |
-| `Comentarios`   | `id` (NUMBER) | FbookPublicationStack |
-| `Reacciones`    | `id` (NUMBER) | FbookPublicationStack |
-
+| Table           | Partition Key | Accessible by Task Role |
+| --------------- | ------------- | ----------------------- |
+| `Usuarios`      | `id` (NUMBER) | usuario only            |
+| `Amistades`     | `id` (NUMBER) | amistad only            |
+| `Publicaciones` | `id` (NUMBER) | publicacion only        |
+| `Comentarios`   | `id` (NUMBER) | publicacion only        |
+| `Reacciones`    | `id` (NUMBER) | publicacion only        |
 
 ---
 
@@ -186,13 +196,12 @@ Internet
   │  :80
   ▼
 sg-alb
-  │  :3000  (only to sg-microservice)
+  │  :3000  (only to sg-ecs)
   ▼
-sg-microservice  ←── :22  ──  sg-bastion  ←── :22  ──  Internet
-  │  :3000  (inter-service calls, intra sg-microservice)
-  ▼
-EC2 instances (no public IP, unreachable from internet)
-  │  (via NAT Gateway → ECR pull at startup)
+sg-ecs  ←── :3000 ── sg-ecs  (inter-service via Cloud Map)
+  │
+ECS Fargate tasks (no public IP, unreachable from internet)
+  │  (via NAT Gateway → ECR pull, CloudWatch logs)
   ▼
 DynamoDB (via VPC Gateway Endpoint — stays in AWS network)
 ```
@@ -201,79 +210,61 @@ DynamoDB (via VPC Gateway Endpoint — stays in AWS network)
 
 ## Deployment Order
 
-CDK resolves inter-stack dependencies automatically. The logical order is:
+CDK resolves inter-stack dependencies automatically based on props passed between stacks.
 
 ```
 FbookCdkStack (Cognito — independent)
 
-FbookNetworkStack (VPC, SGs, key pair reference)
-    ↓                    ↓
-FbookBastionStack   FbookAlbStack
-                         ↓         ↓           ↓
-               FbookUsersStack  FbookAmistadStack  FbookPublicationStack
+FbookNetworkStack (VPC, SGs)
+    ↓
+FbookClusterStack (ECS Cluster, ECR, Cloud Map, Log Groups)
+    ↓
+FbookAlbStack
+    ↓              ↓                  ↓
+FbookUsersStack  FbookAmistadStack  FbookPublicationStack
 ```
 
-### Pre-deploy checklist
+### First-time deploy
 
-- AWS CLI configured (`aws sts get-caller-identity` succeeds)
-- CDK bootstrapped (`npx cdk bootstrap`)
-- Key pair `**fbook-key**` exists in AWS Console → EC2 → Key Pairs
-- `~/.ssh/fbook-key.pem` saved locally with `chmod 400`
-- Docker images pushed to ECR for all 3 microservices
-
-### Deploy
+ECR repositories are created empty by CDK. ECS cannot start tasks without images — deploy the service stacks only after pushing images to ECR.
 
 ```bash
-npx cdk deploy --all
+# Step 1 — infrastructure (no ECS services yet)
+npx cdk deploy FbookCdkStack FbookNetworkStack FbookClusterStack FbookAlbStack --profile fbook
+
+# Step 2 — push images (from fbook-api repo)
+./push-to-ecr.sh fbook
+
+# Step 3 — ECS services (images now available)
+npx cdk deploy FbookUsersStack FbookAmistadStack FbookPublicationStack --profile fbook
 ```
 
-### SSH to a microservice (after deploy)
-
-Add to `~/.ssh/config` (substitute real Bastion IP):
-
-```
-Host fbook-bastion
-    HostName <BastionPublicIp>
-    User ec2-user
-    IdentityFile ~/.ssh/fbook-key.pem
-    IdentitiesOnly yes
-
-Host 10.0.2.*
-    User ec2-user
-    IdentityFile ~/.ssh/fbook-key.pem
-    IdentitiesOnly yes
-    ProxyJump fbook-bastion
-```
+### Subsequent deploys
 
 ```bash
-ssh 10.0.2.10   # Usuarios
-ssh 10.0.2.11   # Amistad
-ssh 10.0.2.12   # Publicacion
+npx cdk deploy --all --profile fbook
 ```
 
 ### Tear Down
 
 ```bash
-npx cdk destroy --all
+npx cdk destroy --all --profile fbook
 ```
 
-All resources are destroyed including DynamoDB tables and EC2 instances. The manually-created `fbook-key` key pair is **not** deleted.
+DynamoDB tables are destroyed (`removalPolicy: DESTROY`). ECR repositories are **retained** (`removalPolicy: RETAIN`) to avoid losing images.
 
 ---
 
 ## Cost Estimate
 
-
-| Resource                                 | Monthly cost | Notes                                            |
-| ---------------------------------------- | ------------ | ------------------------------------------------ |
-| NAT Gateway                              | ~$32         | Biggest cost driver; eliminated on `cdk destroy` |
-| ALB                                      | ~$22         | Free tier: 750 hrs/month                         |
-| EC2 t3.micro × 4                         | ~$0–20       | Free tier: 750 hrs/month total                   |
-| DynamoDB                                 | ~$0          | Always-free tier covers dev load                 |
-| VPC / IGW / SGs                          | $0           | Always free                                      |
-| Cognito                                  | $0           | Always free up to 50K MAUs                       |
-| **Total (destroyed after each session)** | **~$0**      |                                                  |
-
-
----
-
+| Resource          | Monthly cost | Notes                                            |
+| ----------------- | ------------ | ------------------------------------------------ |
+| NAT Gateway       | ~$32         | Biggest cost driver; eliminated on `cdk destroy` |
+| ALB               | ~$22         | Free tier: 750 hrs/month                         |
+| ECS Fargate       | ~$0–5        | 256 CPU / 512 MB per task, 9 tasks total         |
+| DynamoDB          | ~$0          | Always-free tier covers dev load                 |
+| ECR               | ~$0          | Free tier: 500 MB/month per repo                 |
+| CloudWatch Logs   | ~$0          | Free tier covers dev volume                      |
+| VPC / IGW / SGs   | $0           | Always free                                      |
+| Cognito           | $0           | Always free up to 50K MAUs                       |
+| **Total (destroyed after each session)** | **~$0** |                             |

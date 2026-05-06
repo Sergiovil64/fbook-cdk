@@ -2,7 +2,7 @@
 import * as cdk from 'aws-cdk-lib/core';
 import { FbookCdkStack }    from '../lib/fbook-cdk-stack';
 import { NetworkStack }     from '../lib/network-stack';
-import { BastionStack }     from '../lib/bastion-stack';
+import { ClusterStack }     from '../lib/cluster-stack';
 import { AlbStack }         from '../lib/alb-stack';
 import { UsersStack }       from '../lib/users-stack';
 import { AmistadStack }     from '../lib/amistad-stack';
@@ -21,24 +21,24 @@ const tags = {
   ManagedBy:   'CDK',
 };
 
-// ── Stack 1: Autenticación ────────────────────────────────────────────────────
+// ── Stack 1: Cognito User Pool (OIDC) ─────────────────────────────────────────
 new FbookCdkStack(app, 'FbookCdkStack', {
   env,
   description: 'Fbook — Cognito User Pool as an OIDC Authorization Server (Authorization Code Flow + PKCE)',
   tags,
 });
 
-// ── Stack 2: Red (VPC, subnets, NAT, SGs, key pair) ──────────────────────────
+// ── Stack 2: Red (VPC, subnets, NAT, SGs) ────────────────────────────────────
 const network = new NetworkStack(app, 'FbookNetworkStack', {
   env,
-  description: 'Fbook — VPC, subnets públicas/privadas, NAT Gateway, security groups',
+  description: 'Fbook — VPC, subnets públicas/privadas, NAT Gateway, security groups (ALB + ECS)',
   tags,
 });
 
-// ── Stack 3: Bastion (acceso SSH a EC2 privados) ──────────────────────────────
-new BastionStack(app, 'FbookBastionStack', {
+// ── Stack 3: ECS Cluster + Cloud Map + ECR repos + Task Execution Role ────────
+const cluster = new ClusterStack(app, 'FbookClusterStack', {
   env,
-  description: 'Fbook — Bastion Host para acceso SSH a microservicios en subnet privada',
+  description: 'Fbook — ECS Cluster Fargate, Cloud Map fbook.local, repositorios ECR, Task Execution Role',
   tags,
   network,
 });
@@ -46,35 +46,35 @@ new BastionStack(app, 'FbookBastionStack', {
 // ── Stack 4: Load Balancer ────────────────────────────────────────────────────
 const alb = new AlbStack(app, 'FbookAlbStack', {
   env,
-  description: 'Fbook — Application Load Balancer con path routing hacia microservicios',
+  description: 'Fbook — Application Load Balancer con path routing hacia microservicios ECS',
   tags,
   network,
 });
 
-// ── Stacks 5-7: Microservicios (EC2 t2.micro + DynamoDB) ─────────────────────
-// IP privada estática: 10.0.2.10
+// ── Stacks 5-7: Microservicios (ECS Fargate + DynamoDB) ──────────────────────
 new UsersStack(app, 'FbookUsersStack', {
   env,
-  description: 'Fbook — Microservicio Usuarios: EC2 + DynamoDB Usuarios',
+  description: 'Fbook — Microservicio Usuarios: ECS Fargate + DynamoDB Usuarios',
   tags,
   network,
   alb,
+  cluster,
 });
 
-// IP privada estática: 10.0.2.11
 new AmistadStack(app, 'FbookAmistadStack', {
   env,
-  description: 'Fbook — Microservicio Amistad: EC2 + DynamoDB Amistades',
+  description: 'Fbook — Microservicio Amistad: ECS Fargate + DynamoDB Amistades',
   tags,
   network,
   alb,
+  cluster,
 });
 
-// IP privada estática: 10.0.2.12
 new PublicationStack(app, 'FbookPublicationStack', {
   env,
-  description: 'Fbook — Microservicio Publicaciones: EC2 + DynamoDB Publicaciones/Comentarios/Reacciones',
+  description: 'Fbook — Microservicio Publicaciones: ECS Fargate + DynamoDB Publicaciones/Comentarios/Reacciones',
   tags,
   network,
   alb,
+  cluster,
 });

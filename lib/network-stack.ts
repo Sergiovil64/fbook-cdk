@@ -5,9 +5,7 @@ import { Construct } from 'constructs';
 export class NetworkStack extends cdk.Stack {
   readonly vpc: ec2.Vpc;
   readonly sgAlb: ec2.SecurityGroup;
-  readonly sgBastion: ec2.SecurityGroup;
-  readonly sgMicroservice: ec2.SecurityGroup;
-  readonly keyPair: ec2.IKeyPair;
+  readonly sgEcs: ec2.SecurityGroup;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -31,14 +29,12 @@ export class NetworkStack extends cdk.Stack {
       ],
     });
 
+    // Gateway endpoint para DynamoDB (tráfico no sale por NAT)
     this.vpc.addGatewayEndpoint('DynamoDbEndpoint', {
       service: ec2.GatewayVpcEndpointAwsService.DYNAMODB,
     });
 
-    // Importa el key pair existente (creado manualmente desde consola AWS)
-    this.keyPair = ec2.KeyPair.fromKeyPairName(this, 'FbookKeyPair', 'fbook-key');
-
-    // Security Groups
+    // sg-alb: internet → ALB
     this.sgAlb = new ec2.SecurityGroup(this, 'SgAlb', {
       vpc: this.vpc,
       description: 'ALB: allows HTTP from internet',
@@ -46,28 +42,16 @@ export class NetworkStack extends cdk.Stack {
     });
     this.sgAlb.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), 'HTTP desde internet');
 
-    this.sgBastion = new ec2.SecurityGroup(this, 'SgBastion', {
+    // sg-ecs: tareas Fargate
+    this.sgEcs = new ec2.SecurityGroup(this, 'SgEcs', {
       vpc: this.vpc,
-      description: 'Bastion: allows SSH from internet',
-      allowAllOutbound: true,
+      description: 'ECS Fargate tasks: traffic from ALB and inter-service (Cloud Map)',
+      allowAllOutbound: true, // DynamoDB, ECR, CloudWatch, Cognito
     });
-    this.sgBastion.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(22), 'SSH desde internet');
+    this.sgEcs.addIngressRule(this.sgAlb, ec2.Port.tcp(3000), 'App desde ALB');
+    this.sgEcs.addIngressRule(this.sgEcs, ec2.Port.tcp(3000), 'Llamadas inter-servicio (Cloud Map)');
 
-    this.sgMicroservice = new ec2.SecurityGroup(this, 'SgMicroservice', {
-      vpc: this.vpc,
-      description: 'EC2 microservices: traffic from ALB and SSH from Bastion',
-      allowAllOutbound: true,
-    });
-    this.sgMicroservice.addIngressRule(this.sgAlb,           ec2.Port.tcp(3000), 'App desde ALB');
-    this.sgMicroservice.addIngressRule(this.sgBastion,       ec2.Port.tcp(22),   'SSH desde Bastion');
-    this.sgMicroservice.addIngressRule(this.sgMicroservice,  ec2.Port.tcp(3000), 'Llamadas inter-servicio');
-
-    // Allow the ALB to reach the microservices
-    this.sgAlb.addEgressRule(this.sgMicroservice, ec2.Port.tcp(3000), 'To microservices');
-
-    new cdk.CfnOutput(this, 'KeyPairNote', {
-      value: 'fbook-key fue creado manualmente. Usa el .pem descargado desde la consola AWS para SSH.',
-      description: 'Key pair info',
-    });
+    // Permite que el ALB llegue a las tareas ECS
+    this.sgAlb.addEgressRule(this.sgEcs, ec2.Port.tcp(3000), 'To ECS tasks');
   }
 }
