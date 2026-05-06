@@ -4,10 +4,16 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import { ClusterStack } from './cluster-stack';
+import * as targets from 'aws-cdk-lib/aws-elasticloadbalancingv2-targets';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { NetworkStack } from './network-stack';
 import { AlbStack } from './alb-stack';
-import { ClusterStack } from './cluster-stack';
+
+const ECR_BASE  = '140858350333.dkr.ecr.us-east-1.amazonaws.com';
+const IMAGE     = `${ECR_BASE}/fbook-service-amistad:latest`;
+const LOG_GROUP = '/fbook/amistad';
 
 interface AmistadStackProps extends cdk.StackProps {
   network: NetworkStack;
@@ -16,6 +22,10 @@ interface AmistadStackProps extends cdk.StackProps {
 }
 
 export class AmistadStack extends cdk.Stack {
+  readonly table: dynamodb.TableV2;
+  readonly instance: ec2.Instance;
+  readonly targetGroup: elbv2.ApplicationTargetGroup;
+
   constructor(scope: Construct, id: string, props: AmistadStackProps) {
     super(scope, id, props);
 

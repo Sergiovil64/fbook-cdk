@@ -8,6 +8,12 @@ import { Construct } from 'constructs';
 import { NetworkStack } from './network-stack';
 import { AlbStack } from './alb-stack';
 import { ClusterStack } from './cluster-stack';
+import * as targets from 'aws-cdk-lib/aws-elasticloadbalancingv2-targets';
+import * as logs from 'aws-cdk-lib/aws-logs';
+
+const ECR_BASE  = '140858350333.dkr.ecr.us-east-1.amazonaws.com';
+const IMAGE     = `${ECR_BASE}/fbook-service-usuario:latest`;
+const LOG_GROUP = '/fbook/usuario';
 
 interface UsersStackProps extends cdk.StackProps {
   network: NetworkStack;
@@ -16,6 +22,10 @@ interface UsersStackProps extends cdk.StackProps {
 }
 
 export class UsersStack extends cdk.Stack {
+  readonly table: dynamodb.TableV2;
+  readonly instance: ec2.Instance;
+  readonly targetGroup: elbv2.ApplicationTargetGroup;
+
   constructor(scope: Construct, id: string, props: UsersStackProps) {
     super(scope, id, props);
 
