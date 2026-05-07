@@ -7,6 +7,8 @@ import { AlbStack }         from '../lib/alb-stack';
 import { UsersStack }       from '../lib/users-stack';
 import { AmistadStack }     from '../lib/amistad-stack';
 import { PublicationStack } from '../lib/publication-stack';
+import { DashboardStack }   from '../lib/dashboard-stack';
+import { PipelineStack }    from '../lib/pipeline-stack';
 
 const app = new cdk.App();
 
@@ -52,7 +54,7 @@ const alb = new AlbStack(app, 'FbookAlbStack', {
 });
 
 // ── Stacks 5-7: Microservicios (ECS Fargate + DynamoDB) ──────────────────────
-new UsersStack(app, 'FbookUsersStack', {
+const users = new UsersStack(app, 'FbookUsersStack', {
   env,
   description: 'Fbook — Microservicio Usuarios: ECS Fargate + DynamoDB Usuarios',
   tags,
@@ -62,7 +64,7 @@ new UsersStack(app, 'FbookUsersStack', {
   cognitoUserPoolId: cognito.userPoolId,
 });
 
-new AmistadStack(app, 'FbookAmistadStack', {
+const amistad = new AmistadStack(app, 'FbookAmistadStack', {
   env,
   description: 'Fbook — Microservicio Amistad: ECS Fargate + DynamoDB Amistades',
   tags,
@@ -72,7 +74,7 @@ new AmistadStack(app, 'FbookAmistadStack', {
   cognitoUserPoolId: cognito.userPoolId,
 });
 
-new PublicationStack(app, 'FbookPublicationStack', {
+const publication = new PublicationStack(app, 'FbookPublicationStack', {
   env,
   description: 'Fbook — Microservicio Publicaciones: ECS Fargate + DynamoDB Publicaciones/Comentarios/Reacciones',
   tags,
@@ -80,4 +82,31 @@ new PublicationStack(app, 'FbookPublicationStack', {
   alb,
   cluster,
   cognitoUserPoolId: cognito.userPoolId,
+});
+
+// ── Stack 8: CloudWatch Dashboard ─────────────────────────────────────────────
+new DashboardStack(app, 'FbookDashboardStack', {
+  env,
+  description: 'Fbook — CloudWatch Dashboard único con logs, métricas EMF, EC2 y ALB',
+  tags,
+  alb,
+  users,
+  amistad,
+  publication,
+});
+
+// ── Stack 9: CI/CD Pipeline (CodePipeline + CodeBuild + EventBridge) ──────────
+// Connection ARN viene de la CodeStar Connection creada manualmente (Fase 0).
+// Pasarlo como env var: FBOOK_CODESTAR_CONN_ARN
+const codestarConnectionArn = process.env.FBOOK_CODESTAR_CONN_ARN
+  ?? 'arn:aws:codeconnections:us-east-1:140858350333:connection/36d58fd1-a0de-4fe9-8d91-05ab66e09fd8';
+
+new PipelineStack(app, 'FbookPipelineStack', {
+  env,
+  description: 'Fbook — CI/CD: 3 CodePipeline (uno por microservicio) disparados por tags git',
+  tags,
+  codestarConnectionArn,
+  githubOwner: 'Sergiovil64',
+  githubRepo: 'fbook-api',
+  githubBranch: 'main',
 });

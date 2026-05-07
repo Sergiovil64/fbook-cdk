@@ -8,7 +8,6 @@ import { Construct } from 'constructs';
 import { NetworkStack } from './network-stack';
 import { AlbStack } from './alb-stack';
 import { ClusterStack } from './cluster-stack';
-
 interface PublicationStackProps extends cdk.StackProps {
   network: NetworkStack;
   alb: AlbStack;
@@ -17,6 +16,11 @@ interface PublicationStackProps extends cdk.StackProps {
 }
 
 export class PublicationStack extends cdk.Stack {
+  readonly tablePublicaciones: dynamodb.TableV2;
+  readonly tableComentarios: dynamodb.TableV2;
+  readonly tableReacciones: dynamodb.TableV2;
+  readonly targetGroup: elbv2.ApplicationTargetGroup;
+
   constructor(scope: Construct, id: string, props: PublicationStackProps) {
     super(scope, id, props);
 
@@ -108,8 +112,9 @@ export class PublicationStack extends cdk.Stack {
         unhealthyThresholdCount: 3,
       },
     });
+    this.targetGroup = targetGroup;
 
-    // ECS Service con Cloud Map 
+    // ECS Service con Cloud Map
     const service = new ecs.FargateService(this, 'PublicacionService', {
       serviceName: 'fbook-service-publicacion',
       cluster: props.cluster.cluster,

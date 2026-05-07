@@ -4,10 +4,10 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import { ClusterStack } from './cluster-stack';
 import { Construct } from 'constructs';
 import { NetworkStack } from './network-stack';
 import { AlbStack } from './alb-stack';
-import { ClusterStack } from './cluster-stack';
 
 interface AmistadStackProps extends cdk.StackProps {
   network: NetworkStack;
@@ -17,6 +17,9 @@ interface AmistadStackProps extends cdk.StackProps {
 }
 
 export class AmistadStack extends cdk.Stack {
+  readonly table: dynamodb.TableV2;
+  readonly targetGroup: elbv2.ApplicationTargetGroup;
+
   constructor(scope: Construct, id: string, props: AmistadStackProps) {
     super(scope, id, props);
 
@@ -87,6 +90,7 @@ export class AmistadStack extends cdk.Stack {
         unhealthyThresholdCount: 3,
       },
     });
+    this.targetGroup = targetGroup;
 
     // ECS Service con Cloud Map
     const service = new ecs.FargateService(this, 'AmistadService', {
