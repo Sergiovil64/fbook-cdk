@@ -25,7 +25,7 @@ export class AmistadStack extends cdk.Stack {
     // DynamoDB
     const table = new dynamodb.TableV2(this, 'AmistadTable', {
       tableName: 'Amistades',
-      partitionKey: { name: 'id', type: dynamodb.AttributeType.NUMBER },
+      partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
       billing: dynamodb.Billing.onDemand(),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });

@@ -24,7 +24,7 @@ export class UsersStack extends cdk.Stack {
     // DynamoDB
     const table = new dynamodb.TableV2(this, 'UsuariosTable', {
       tableName: 'Usuarios',
-      partitionKey: { name: 'id', type: dynamodb.AttributeType.NUMBER },
+      partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
       billing: dynamodb.Billing.onDemand(),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });

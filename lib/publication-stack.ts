@@ -26,21 +26,21 @@ export class PublicationStack extends cdk.Stack {
     // DynamoDB
     const tablePublicaciones = new dynamodb.TableV2(this, 'PublicacionesTable', {
       tableName: 'Publicaciones',
-      partitionKey: { name: 'id', type: dynamodb.AttributeType.NUMBER },
+      partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
       billing: dynamodb.Billing.onDemand(),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
     const tableComentarios = new dynamodb.TableV2(this, 'ComentariosTable', {
       tableName: 'Comentarios',
-      partitionKey: { name: 'id', type: dynamodb.AttributeType.NUMBER },
+      partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
       billing: dynamodb.Billing.onDemand(),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
     const tableReacciones = new dynamodb.TableV2(this, 'ReaccionesTable', {
       tableName: 'Reacciones',
-      partitionKey: { name: 'id', type: dynamodb.AttributeType.NUMBER },
+      partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
       billing: dynamodb.Billing.onDemand(),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
