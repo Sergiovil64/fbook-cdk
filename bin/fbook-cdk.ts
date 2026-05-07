@@ -22,7 +22,7 @@ const tags = {
 };
 
 // ── Stack 1: Cognito User Pool (OIDC) ─────────────────────────────────────────
-new FbookCdkStack(app, 'FbookCdkStack', {
+const cognito = new FbookCdkStack(app, 'FbookCdkStack', {
   env,
   description: 'Fbook — Cognito User Pool as an OIDC Authorization Server (Authorization Code Flow + PKCE)',
   tags,
@@ -59,6 +59,7 @@ new UsersStack(app, 'FbookUsersStack', {
   network,
   alb,
   cluster,
+  cognitoUserPoolId: cognito.userPoolId,
 });
 
 new AmistadStack(app, 'FbookAmistadStack', {
@@ -68,6 +69,7 @@ new AmistadStack(app, 'FbookAmistadStack', {
   network,
   alb,
   cluster,
+  cognitoUserPoolId: cognito.userPoolId,
 });
 
 new PublicationStack(app, 'FbookPublicationStack', {
@@ -77,4 +79,5 @@ new PublicationStack(app, 'FbookPublicationStack', {
   network,
   alb,
   cluster,
+  cognitoUserPoolId: cognito.userPoolId,
 });

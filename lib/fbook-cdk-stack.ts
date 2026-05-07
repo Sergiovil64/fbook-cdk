@@ -27,6 +27,8 @@ import { Construct } from 'constructs';
  *   sub, email, email_verified, iss, aud, exp, iat
  */
 export class FbookCdkStack extends cdk.Stack {
+  public readonly userPoolId: string;
+
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
@@ -56,6 +58,8 @@ export class FbookCdkStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    this.userPoolId = userPool.userPoolId;
+
     const domainPrefix = 'fbook-auth';
 
     const userPoolDomain = userPool.addDomain('FbookUserPoolDomain', {
@@ -65,6 +69,11 @@ export class FbookCdkStack extends cdk.Stack {
     const userPoolClient = userPool.addClient('FbookWebClient', {
       userPoolClientName: 'fbook-web-client',
       generateSecret:     false,
+
+      authFlows: {
+        userPassword: true,
+        adminUserPassword: true,
+      },
 
       oAuth: {
         flows: {

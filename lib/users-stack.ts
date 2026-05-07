@@ -13,6 +13,7 @@ interface UsersStackProps extends cdk.StackProps {
   network: NetworkStack;
   alb: AlbStack;
   cluster: ClusterStack;
+  cognitoUserPoolId: string;
 }
 
 export class UsersStack extends cdk.Stack {
@@ -22,7 +23,7 @@ export class UsersStack extends cdk.Stack {
     // DynamoDB
     const table = new dynamodb.TableV2(this, 'UsuariosTable', {
       tableName: 'Usuarios',
-      partitionKey: { name: 'id', type: dynamodb.AttributeType.NUMBER },
+      partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
       billing: dynamodb.Billing.onDemand(),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
@@ -39,6 +40,14 @@ export class UsersStack extends cdk.Stack {
       ],
       resources: [`arn:aws:dynamodb:us-east-1:*:table/Usuarios`],
     }));
+    taskRole.addToPolicy(new iam.PolicyStatement({
+      actions: [
+        'cognito-idp:AdminCreateUser',
+        'cognito-idp:AdminSetUserPassword',
+        'cognito-idp:AdminDeleteUser',
+      ],
+      resources: [`arn:aws:cognito-idp:us-east-1:*:userpool/${props.cognitoUserPoolId}`],
+    }));
 
     // Task Definition 
     const taskDef = new ecs.FargateTaskDefinition(this, 'UsuarioTaskDef', {
@@ -54,6 +63,7 @@ export class UsersStack extends cdk.Stack {
         PORT: '3000',
         AWS_REGION: 'us-east-1',
         TABLE_NAME: 'Usuarios',
+        COGNITO_USER_POOL_ID: props.cognitoUserPoolId,
       },
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: 'ecs',
@@ -91,6 +101,8 @@ export class UsersStack extends cdk.Stack {
       cluster: props.cluster.cluster,
       taskDefinition: taskDef,
       desiredCount: 3,
+      minHealthyPercent: 100,
+      maxHealthyPercent: 200,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [props.network.sgEcs],
       assignPublicIp: false,
