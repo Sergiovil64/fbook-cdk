@@ -27,7 +27,7 @@ Cloud Map (fbook.local) — inter-service discovery
    publicacion.fbook.local → tasks of fbook-service-publicacion
 
 DynamoDB (on-demand, IAM Task Role per service)
-   Task Role usuario     → table Usuarios
+   Task Role usuario     → table Usuarios + Cognito (AdminCreateUser, AdminSetUserPassword, AdminDeleteUser)
    Task Role amistad     → table Amistades
    Task Role publicacion → tables Publicaciones, Comentarios, Reacciones
 
@@ -133,6 +133,8 @@ npx cdk deploy --all --profile fbook
 
 | Output | Description |
 |--------|-------------|
+| `FbookCdkStack.UserPoolId` | Cognito User Pool ID — needed by all services (`COGNITO_USER_POOL_ID`) |
+| `FbookCdkStack.UserPoolClientId` | Cognito App Client ID — needed to call `InitiateAuth` (`COGNITO_CLIENT_ID`) |
 | `FbookAlbStack.AlbDnsName` | Public DNS of the ALB — base URL for all API calls |
 | `FbookClusterStack.ClusterName` | ECS Cluster name — used by CI/CD |
 | `FbookClusterStack.RepoUsuarioUri` | ECR URI for service-usuario |

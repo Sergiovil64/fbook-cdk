@@ -12,6 +12,7 @@ interface PublicationStackProps extends cdk.StackProps {
   network: NetworkStack;
   alb: AlbStack;
   cluster: ClusterStack;
+  cognitoUserPoolId: string;
 }
 
 export class PublicationStack extends cdk.Stack {
@@ -80,6 +81,7 @@ export class PublicationStack extends cdk.Stack {
         TABLE_REACCIONES: 'Reacciones',
         USUARIO_SERVICE_URL: 'http://usuario.fbook.local:3000',
         PUBLICACION_SERVICE_URL: 'http://publicacion.fbook.local:3000',
+        COGNITO_USER_POOL_ID: props.cognitoUserPoolId,
       },
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: 'ecs',
@@ -118,6 +120,8 @@ export class PublicationStack extends cdk.Stack {
       cluster: props.cluster.cluster,
       taskDefinition: taskDef,
       desiredCount: 3,
+      minHealthyPercent: 100,
+      maxHealthyPercent: 200,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [props.network.sgEcs],
       assignPublicIp: false,

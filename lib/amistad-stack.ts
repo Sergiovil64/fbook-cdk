@@ -13,6 +13,7 @@ interface AmistadStackProps extends cdk.StackProps {
   network: NetworkStack;
   alb: AlbStack;
   cluster: ClusterStack;
+  cognitoUserPoolId: string;
 }
 
 export class AmistadStack extends cdk.Stack {
@@ -58,6 +59,7 @@ export class AmistadStack extends cdk.Stack {
         AWS_REGION: 'us-east-1',
         TABLE_NAME: 'Amistades',
         USUARIO_SERVICE_URL: 'http://usuario.fbook.local:3000',
+        COGNITO_USER_POOL_ID: props.cognitoUserPoolId,
       },
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: 'ecs',
@@ -96,6 +98,8 @@ export class AmistadStack extends cdk.Stack {
       cluster: props.cluster.cluster,
       taskDefinition: taskDef,
       desiredCount: 3,
+      minHealthyPercent: 100,
+      maxHealthyPercent: 200,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [props.network.sgEcs],
       assignPublicIp: false,
