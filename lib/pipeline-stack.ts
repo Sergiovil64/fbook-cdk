@@ -4,15 +4,13 @@ import * as cpactions from 'aws-cdk-lib/aws-codepipeline-actions';
 import * as codebuild from 'aws-cdk-lib/aws-codebuild';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as events from 'aws-cdk-lib/aws-events';
-import * as targets from 'aws-cdk-lib/aws-events-targets';
 import { Construct } from 'constructs';
 
 interface PipelineStackProps extends cdk.StackProps {
   codestarConnectionArn: string;
   githubOwner: string; // ej. "Sergiovil64"
   githubRepo: string;  // ej. "fbook-api"
-  githubBranch: string; // rama por default; el filtro real es por tag via EventBridge
+  githubBranch: string; // rama por default; el filtro real es por tag via Pipeline V2 trigger
 }
 
 const SERVICES = ['usuario', 'amistad', 'publicacion'] as const;
@@ -76,8 +74,10 @@ export class PipelineStack extends cdk.Stack {
                 // El service apunta a ":latest". Build ya pusheó :latest al digest nuevo;
                 // --force-new-deployment hace que ECS pull el digest actual y haga rollout blue-green natural.
                 'aws ecs update-service --cluster $CLUSTER_NAME --service $SERVICE_NAME --force-new-deployment --region $AWS_REGION',
-                'aws ecs wait services-stable --cluster $CLUSTER_NAME --services $SERVICE_NAME --region $AWS_REGION',
-                'echo "Deploy completed."',
+                // Polling del rolloutState del PRIMARY deployment.
+                // Reemplaza `aws ecs wait services-stable` (timeout fijo 10 min, falla si hay deployments stale en flight).
+                // 60 intentos × 30s = 30 min de techo.
+                'for i in $(seq 1 60); do STATE=$(aws ecs describe-services --cluster $CLUSTER_NAME --services $SERVICE_NAME --region $AWS_REGION --query \'services[0].deployments[?status==`PRIMARY`].rolloutState\' --output text); echo "Attempt $i/60: PRIMARY rolloutState = $STATE"; if [ "$STATE" = "COMPLETED" ]; then echo "Deploy completed."; exit 0; fi; if [ "$STATE" = "FAILED" ]; then echo "Deploy FAILED (rollout state)."; exit 1; fi; sleep 30; done; echo "ERROR: Deploy did not converge within 30 minutes."; exit 1',
               ],
             },
           },
@@ -99,68 +99,53 @@ export class PipelineStack extends cdk.Stack {
         conditions: { StringEquals: { 'iam:PassedToService': 'ecs-tasks.amazonaws.com' } },
       }));
 
-      // ── Pipeline ───────────────────────────────────────────────────────────
+      // ── Source/Build/Deploy actions (declaradas afuera para referenciarlas en triggers) ──
+      const sourceAction = new cpactions.CodeStarConnectionsSourceAction({
+        actionName: 'GitHub_Source',
+        owner: props.githubOwner,
+        repo: props.githubRepo,
+        branch: props.githubBranch,
+        connectionArn: props.codestarConnectionArn,
+        output: sourceArtifact,
+        // El trigger real lo define el `triggers` del pipeline (V2) — filtra por tag.
+        // Apagamos el auto-trigger del action para que no dispare en cada push a `main`.
+        triggerOnPush: false,
+        // Full git clone para que `git describe --exact-match --tags HEAD` funcione en el buildspec.
+        codeBuildCloneOutput: true,
+      });
+
+      const buildAction = new cpactions.CodeBuildAction({
+        actionName: 'Docker_Build_Push',
+        project: buildProject,
+        input: sourceArtifact,
+        outputs: [buildArtifact],
+      });
+
+      const deployAction = new cpactions.CodeBuildAction({
+        actionName: 'Ecs_Update_Service',
+        project: deployProject,
+        input: buildArtifact,
+      });
+
+      // ── Pipeline V2 con trigger nativo por tag git ─────────────────────────
       const pipeline = new codepipeline.Pipeline(this, `${svc}Pipeline`, {
         pipelineName: `fbook-pipeline-${svc}`,
+        pipelineType: codepipeline.PipelineType.V2,
         restartExecutionOnUpdate: false,
-      });
-
-      pipeline.addStage({
-        stageName: 'Source',
-        actions: [
-          new cpactions.CodeStarConnectionsSourceAction({
-            actionName: 'GitHub_Source',
-            owner: props.githubOwner,
-            repo: props.githubRepo,
-            branch: props.githubBranch,
-            connectionArn: props.codestarConnectionArn,
-            output: sourceArtifact,
-            // No queremos disparar en cada push; el trigger real es por tag (EventBridge rule abajo)
-            triggerOnPush: false,
-            // Full git clone en CodeBuild para que `git describe --exact-match --tags HEAD`
-            // pueda derivar la versión del tag dentro del buildspec.
-            codeBuildCloneOutput: true,
-          }),
+        stages: [
+          { stageName: 'Source', actions: [sourceAction] },
+          { stageName: 'Build',  actions: [buildAction]  },
+          { stageName: 'Deploy', actions: [deployAction] },
         ],
-      });
-
-      pipeline.addStage({
-        stageName: 'Build',
-        actions: [
-          new cpactions.CodeBuildAction({
-            actionName: 'Docker_Build_Push',
-            project: buildProject,
-            input: sourceArtifact,
-            outputs: [buildArtifact],
-          }),
-        ],
-      });
-
-      pipeline.addStage({
-        stageName: 'Deploy',
-        actions: [
-          new cpactions.CodeBuildAction({
-            actionName: 'Ecs_Update_Service',
-            project: deployProject,
-            input: buildArtifact,
-          }),
-        ],
-      });
-
-      // ── EventBridge rule: dispara el pipeline solo cuando llega un tag con prefijo del servicio ──
-      new events.Rule(this, `${svc}TagRule`, {
-        ruleName: `fbook-${svc}-tag-trigger`,
-        description: `Triggers ${svc} pipeline when a tag like ${svc}-v* is pushed to GitHub`,
-        eventPattern: {
-          source: ['aws.codeconnections'],
-          detailType: ['CodeStarSourceConnection Repository State Change'],
-          detail: {
-            event: ['referenceCreated', 'referenceUpdated'],
-            referenceType: ['tag'],
-            referenceName: [{ prefix: `${svc}-v` }],
+        triggers: [{
+          providerType: codepipeline.ProviderType.CODE_STAR_SOURCE_CONNECTION,
+          gitConfiguration: {
+            sourceAction: sourceAction,
+            pushFilter: [{
+              tagsIncludes: [`${svc}-v*`],
+            }],
           },
-        },
-        targets: [new targets.CodePipeline(pipeline)],
+        }],
       });
 
       new cdk.CfnOutput(this, `${svc}PipelineName`, { value: pipeline.pipelineName });
