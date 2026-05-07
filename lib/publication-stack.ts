@@ -8,7 +8,6 @@ import { Construct } from 'constructs';
 import { NetworkStack } from './network-stack';
 import { AlbStack } from './alb-stack';
 import { ClusterStack } from './cluster-stack';
-
 interface PublicationStackProps extends cdk.StackProps {
   network: NetworkStack;
   alb: AlbStack;
@@ -16,27 +15,32 @@ interface PublicationStackProps extends cdk.StackProps {
 }
 
 export class PublicationStack extends cdk.Stack {
+  readonly tablePublicaciones: dynamodb.TableV2;
+  readonly tableComentarios: dynamodb.TableV2;
+  readonly tableReacciones: dynamodb.TableV2;
+  readonly targetGroup: elbv2.ApplicationTargetGroup;
+
   constructor(scope: Construct, id: string, props: PublicationStackProps) {
     super(scope, id, props);
 
     // DynamoDB
     const tablePublicaciones = new dynamodb.TableV2(this, 'PublicacionesTable', {
       tableName: 'Publicaciones',
-      partitionKey: { name: 'id', type: dynamodb.AttributeType.NUMBER },
+      partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
       billing: dynamodb.Billing.onDemand(),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
     const tableComentarios = new dynamodb.TableV2(this, 'ComentariosTable', {
       tableName: 'Comentarios',
-      partitionKey: { name: 'id', type: dynamodb.AttributeType.NUMBER },
+      partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
       billing: dynamodb.Billing.onDemand(),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
     const tableReacciones = new dynamodb.TableV2(this, 'ReaccionesTable', {
       tableName: 'Reacciones',
-      partitionKey: { name: 'id', type: dynamodb.AttributeType.NUMBER },
+      partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
       billing: dynamodb.Billing.onDemand(),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
@@ -74,8 +78,8 @@ export class PublicationStack extends cdk.Stack {
         TABLE_NAME: 'Publicaciones',
         TABLE_COMENTARIOS: 'Comentarios',
         TABLE_REACCIONES: 'Reacciones',
-        USUARIO_SERVICE_URL: 'http://usuario.fbook.local',
-        PUBLICACION_SERVICE_URL: 'http://publicacion.fbook.local',
+        USUARIO_SERVICE_URL: 'http://usuario.fbook.local:3000',
+        PUBLICACION_SERVICE_URL: 'http://publicacion.fbook.local:3000',
       },
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: 'ecs',
@@ -106,8 +110,9 @@ export class PublicationStack extends cdk.Stack {
         unhealthyThresholdCount: 3,
       },
     });
+    this.targetGroup = targetGroup;
 
-    // ECS Service con Cloud Map 
+    // ECS Service con Cloud Map
     const service = new ecs.FargateService(this, 'PublicacionService', {
       serviceName: 'fbook-service-publicacion',
       cluster: props.cluster.cluster,

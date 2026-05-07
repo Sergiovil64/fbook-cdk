@@ -8,7 +8,6 @@ import { Construct } from 'constructs';
 import { NetworkStack } from './network-stack';
 import { AlbStack } from './alb-stack';
 import { ClusterStack } from './cluster-stack';
-
 interface UsersStackProps extends cdk.StackProps {
   network: NetworkStack;
   alb: AlbStack;
@@ -16,13 +15,16 @@ interface UsersStackProps extends cdk.StackProps {
 }
 
 export class UsersStack extends cdk.Stack {
+  readonly table: dynamodb.TableV2;
+  readonly targetGroup: elbv2.ApplicationTargetGroup;
+
   constructor(scope: Construct, id: string, props: UsersStackProps) {
     super(scope, id, props);
 
     // DynamoDB
     const table = new dynamodb.TableV2(this, 'UsuariosTable', {
       tableName: 'Usuarios',
-      partitionKey: { name: 'id', type: dynamodb.AttributeType.NUMBER },
+      partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
       billing: dynamodb.Billing.onDemand(),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
@@ -84,6 +86,7 @@ export class UsersStack extends cdk.Stack {
         unhealthyThresholdCount: 3,
       },
     });
+    this.targetGroup = targetGroup;
 
     // ECS Service con Cloud Map
     const service = new ecs.FargateService(this, 'UsuarioService', {
