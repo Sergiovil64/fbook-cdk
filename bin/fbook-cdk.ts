@@ -9,6 +9,7 @@ import { AmistadStack }     from '../lib/amistad-stack';
 import { PublicationStack } from '../lib/publication-stack';
 import { DashboardStack }   from '../lib/dashboard-stack';
 import { PipelineStack }    from '../lib/pipeline-stack';
+import { CiStack }          from '../lib/ci-stack';
 
 const app = new cdk.App();
 
@@ -104,6 +105,19 @@ const codestarConnectionArn = process.env.FBOOK_CODESTAR_CONN_ARN
 new PipelineStack(app, 'FbookPipelineStack', {
   env,
   description: 'Fbook — CI/CD: 3 CodePipeline (uno por microservicio) disparados por tags git',
+  tags,
+  codestarConnectionArn,
+  githubOwner: 'Sergiovil64',
+  githubRepo: 'fbook-api',
+  githubBranch: 'main',
+});
+
+// ── Stack 10: CI (lint/type-check + build de los 3 services) ──────────────────
+// Pipeline V2 separado del CD: dispara en push a main y en PRs (open/updated).
+// Usa la misma CodeStar Connection. Sin stage Deploy.
+new CiStack(app, 'FbookCiStack', {
+  env,
+  description: 'Fbook — CI: type-check + build de los 3 microservicios en push a main y PRs',
   tags,
   codestarConnectionArn,
   githubOwner: 'Sergiovil64',

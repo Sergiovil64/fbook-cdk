@@ -163,6 +163,19 @@ export class DashboardStack extends cdk.Stack {
       }),
     );
 
+    // ── Row 5: ALB 4XX (cubre 401s del JwtAuthGuard, que no pasan por el interceptor EMF) ──
+    dashboard.addWidgets(
+      new cloudwatch.GraphWidget({
+        title: 'ALB — HTTP 4XX por target group (incluye 401 de auth)',
+        left: targetGroups.map(t => t.tg.metrics.httpCodeTarget(
+          cdk.aws_elasticloadbalancingv2.HttpCodeTarget.TARGET_4XX_COUNT,
+          { label: t.name, period: cdk.Duration.minutes(1), statistic: 'Sum' },
+        )),
+        width: 24,
+        height: 6,
+      }),
+    );
+
     new cdk.CfnOutput(this, 'DashboardUrl', {
       value: `https://${this.region}.console.aws.amazon.com/cloudwatch/home?region=${this.region}#dashboards:name=${dashboard.dashboardName}`,
       description: 'CloudWatch Dashboard URL',
