@@ -63,13 +63,24 @@ Authentication is handled by a Cognito User Pool acting as a fully compliant OID
     /ecs/fbook-usuario
     /ecs/fbook-amistad
     /ecs/fbook-publicacion
+
+  CloudWatch Dashboard fbook-overview
+    Errores recientes (EMF StatusCode >= 400)
+    Latencia p50 / p99 · Throughput · Error rate (EMF)
+    ECS CPU / Memory · ALB Healthy hosts · ALB 4XX / 5XX
+
+  CodePipeline V2 (managed by CDK, sourced via CodeStar Connection to GitHub)
+    fbook-pipeline-ci          (CI: type-check on push main + PRs)
+    fbook-pipeline-usuario     (CD: tag usuario-v*    → build → ECS update)
+    fbook-pipeline-amistad     (CD: tag amistad-v*    → build → ECS update)
+    fbook-pipeline-publicacion (CD: tag publicacion-v* → build → ECS update)
 ```
 
 ---
 
 ## Stack Breakdown
 
-The infrastructure is divided into **7 independent CDK stacks**, each with a single responsibility.
+The infrastructure is divided into **10 independent CDK stacks**, each with a single responsibility.
 
 ### 1. `FbookCdkStack` — Authentication
 
@@ -181,11 +192,101 @@ Services communicate via Cloud Map DNS — no hardcoded IPs:
 
 | Table           | Partition Key | Accessible by Task Role |
 | --------------- | ------------- | ----------------------- |
-| `Usuarios`      | `id` (NUMBER) | usuario only            |
-| `Amistades`     | `id` (NUMBER) | amistad only            |
-| `Publicaciones` | `id` (NUMBER) | publicacion only        |
-| `Comentarios`   | `id` (NUMBER) | publicacion only        |
-| `Reacciones`    | `id` (NUMBER) | publicacion only        |
+| `Usuarios`      | `id` (STRING) | usuario only            |
+| `Amistades`     | `id` (STRING) | amistad only            |
+| `Publicaciones` | `id` (STRING) | publicacion only        |
+| `Comentarios`   | `id` (STRING) | publicacion only        |
+| `Reacciones`    | `id` (STRING) | publicacion only        |
+
+> Partition keys store UUIDs (e.g. `cea88b12-941e-...`) — `STRING`. DynamoDB does **not** allow changing the partition key type after table creation; it is immutable.
+
+---
+
+### 8. `FbookDashboardStack` — CloudWatch Dashboard
+
+A single dashboard `fbook-overview` (region `us-east-1`) that consolidates observability for the 3 microservices.
+
+| Row | Widget                                              | Source                                                 |
+| --- | --------------------------------------------------- | ------------------------------------------------------ |
+| 1   | Errores recientes (one widget per service)          | Logs Insights — EMF lines with `StatusCode >= 400`     |
+| 2   | Latencia request p50 / p99                          | EMF metrics — `Fbook/<Svc>` `RequestLatencyMs`         |
+| 2   | Throughput y errores                                | EMF metrics — `RequestCount` + `ErrorCount`            |
+| 3   | ECS CPU Utilization (%) per service                 | `AWS/ECS` namespace                                    |
+| 3   | ECS Memory Utilization (%) per service              | `AWS/ECS` namespace                                    |
+| 4   | ALB Healthy hosts per target group                  | Target group metrics                                   |
+| 4   | ALB HTTP 5XX per target group                       | Target group metrics — `TARGET_5XX_COUNT`              |
+| 5   | ALB HTTP 4XX per target group (incluye 401 de auth) | Target group metrics — `TARGET_4XX_COUNT`              |
+
+**Why the "Errores recientes" query filters EMF lines.** NestJS does not emit a log line for HTTP errors unless a global exception filter is configured. The only structured record per request is the EMF JSON written by the global `EmfMetricsInterceptor`. CloudWatch Logs Insights auto-parses top-level JSON, so `StatusCode >= 400` works directly without `parse`.
+
+**Why a dedicated 4XX widget.** The `JwtAuthGuard` (Cognito JWT validation) runs **before** the `EmfMetricsInterceptor` in NestJS's request pipeline (Guards → Interceptors). When a request fails JWT validation the guard returns 401 directly and the interceptor never executes — so the 401 does not appear in EMF metrics or in the "Errores recientes" widget. The ALB-level 4XX metric is the only way to see these auth failures.
+
+---
+
+### 9. `FbookPipelineStack` — Continuous Deployment
+
+3 CodePipeline V2 pipelines (one per microservice) — `fbook-pipeline-{usuario,amistad,publicacion}`. Each pipeline has 3 stages:
+
+```
+Source (CodeStar Connection → GitHub Sergiovil64/fbook-api, branch main)
+  │  triggerOnPush: false (V2 native triggers control firing)
+  │  codeBuildCloneOutput: true (full git clone with tags)
+  ▼
+Build (CodeBuild PipelineProject)
+  │  - docker build --target production -f services/<svc>/Dockerfile
+  │  - Version derived from `git tag --points-at HEAD | grep "^${SERVICE}-v"`
+  │  - Pushes 4 ECR tags: <X.Y.Z>, <X.Y>, <X>, latest (all → same digest)
+  │  - Outputs image-info.json artifact
+  ▼
+Deploy (CodeBuild PipelineProject)
+  │  - aws ecs update-service --force-new-deployment
+  │  - Polls services[0].deployments[?status==PRIMARY].rolloutState
+  │    (60 attempts × 30s = 30 min ceiling)
+  │  - Replaces `aws ecs wait services-stable` (fixed 10-min timeout)
+```
+
+**Trigger mechanism — Pipeline V2 native.** Each pipeline declares:
+
+```ts
+triggers: [{
+  providerType: ProviderType.CODE_STAR_SOURCE_CONNECTION,
+  gitConfiguration: {
+    sourceAction,
+    pushFilter: [{ tagsIncludes: [`${svc}-v*`] }],
+  },
+}]
+```
+
+The webhook arrives directly from the CodeStar Connection. **EventBridge does not work** for tag pushes from CodeConnections — verified empirically: a catch-all rule over `aws.codeconnections / codestar-connections / codecommit / codepipeline / codebuild` received zero events for `referenceCreated` with `referenceType=tag`.
+
+**Multi-service tagging on the same commit** is supported because the buildspec uses `git tag --points-at HEAD` (which lists *all* tags at HEAD) followed by a grep for `^${SERVICE}-v`. `git describe --exact-match --tags HEAD` is *not* used — it returns a single tag in non-deterministic order when multiple tags share a commit.
+
+**Docker base image** is `public.ecr.aws/docker/library/node:20-alpine`, the AWS-hosted mirror of the official Docker Hub image. CodeBuild runs from a shared IP pool that easily exceeds Docker Hub's anonymous pull limit (100 / 6h per IP), causing 429 errors. ECR Public has no rate limit for AWS-to-AWS pulls.
+
+**`--target production` is mandatory** in the `docker build` command. The Dockerfiles' last stage is `development` (used by `docker-compose.dev.yml` for hot-reload), so without an explicit target Docker would build a broken image (no `dist/` copied) that loops failing health checks.
+
+---
+
+### 10. `FbookCiStack` — Continuous Integration
+
+A single CodePipeline V2 pipeline `fbook-pipeline-ci` with two stages: Source → Build (no Deploy). Triggers on:
+- Push to `main`
+- Pull request events on `main` (OPEN, UPDATED) — surfaces as a status check on the PR
+
+The Build stage runs `npm ci && npm run build` (which is `nest build`, equivalent to a TypeScript compile + bundle) for the 3 services in series, each in a subshell to keep the working directory clean:
+
+```yaml
+phases:
+  build:
+    commands:
+      - (cd services/usuario && npm ci && npm run build)
+      - (cd services/amistad && npm ci && npm run build)
+      - (cd services/publicacion && npm ci && npm run build)
+```
+
+**Why a separate pipeline and not extra stages on the CD pipelines?** The CD pipelines are triggered by tags only (push of `<svc>-v*`). Adding a build stage to them would not catch errors at PR time. CI needs its own trigger filter (`pushFilter.branchesIncludes` + `pullRequestFilter`) which is independent of the tag filter.
+
+**Why CodePipeline V2 and not a standalone CodeBuild project with a GitHub webhook?** A standalone CodeBuild project's webhook requires GitHub OAuth or a Personal Access Token — a separate auth path from the CodeStar Connection used by the CD pipelines. V2 reuses the same connection, keeping the auth surface minimal.
 
 ---
 
@@ -213,15 +314,21 @@ DynamoDB (via VPC Gateway Endpoint — stays in AWS network)
 CDK resolves inter-stack dependencies automatically based on props passed between stacks.
 
 ```
-FbookCdkStack (Cognito — independent)
-
-FbookNetworkStack (VPC, SGs)
-    ↓
-FbookClusterStack (ECS Cluster, ECR, Cloud Map, Log Groups)
-    ↓
-FbookAlbStack
+FbookCdkStack (Cognito) ──────────────────────────┐  exports userPoolId
+                                                  │
+FbookNetworkStack (VPC, SGs)                      │
+    ↓                                             │
+FbookClusterStack (ECS Cluster, ECR, Cloud Map,   │
+                   Log Groups)                    │
+    ↓                                             │
+FbookAlbStack                                     │
+    ↓              ↓                  ↓           │
+FbookUsersStack  FbookAmistadStack  FbookPublicationStack  ←─ consume userPoolId
     ↓              ↓                  ↓
-FbookUsersStack  FbookAmistadStack  FbookPublicationStack
+            FbookDashboardStack (consumes target groups)
+
+FbookPipelineStack (independent — uses imported ECR repos)
+FbookCiStack       (independent — only needs source)
 ```
 
 ### First-time deploy
@@ -245,6 +352,19 @@ npx cdk deploy FbookUsersStack FbookAmistadStack FbookPublicationStack --profile
 npx cdk deploy --all --profile fbook
 ```
 
+> **Cross-stack reference workaround.** If a `cdk deploy --all` fails with `Cannot delete export ... as it is in use by ...` (happens when a consumer drops an import while the live export is still wired), deploy the consumer stacks first to drop their imports, then re-run `--all`:
+>
+> ```bash
+> npx cdk deploy FbookAmistadStack FbookPublicationStack --profile fbook
+> npx cdk deploy --all --profile fbook
+> ```
+
+### Pipelines & Dashboard — first deploy
+
+`FbookPipelineStack` and `FbookCiStack` both source from GitHub via a CodeStar Connection — a manual one-time AWS Console step (see `README.md → Prerequisites → CodeStar Connection`). Set the env var `FBOOK_CODESTAR_CONN_ARN` before deploying these stacks, otherwise CDK falls back to the project's hard-coded ARN which only works for the original AWS account.
+
+`FbookDashboardStack` has no manual prerequisites. It can be deployed at any time after the service stacks exist.
+
 ### Tear Down
 
 ```bash
@@ -257,14 +377,19 @@ DynamoDB tables are destroyed (`removalPolicy: DESTROY`). ECR repositories are *
 
 ## Cost Estimate
 
-| Resource          | Monthly cost | Notes                                            |
-| ----------------- | ------------ | ------------------------------------------------ |
-| NAT Gateway       | ~$32         | Biggest cost driver; eliminated on `cdk destroy` |
-| ALB               | ~$22         | Free tier: 750 hrs/month                         |
-| ECS Fargate       | ~$0–5        | 256 CPU / 512 MB per task, 9 tasks total         |
-| DynamoDB          | ~$0          | Always-free tier covers dev load                 |
-| ECR               | ~$0          | Free tier: 500 MB/month per repo                 |
-| CloudWatch Logs   | ~$0          | Free tier covers dev volume                      |
-| VPC / IGW / SGs   | $0           | Always free                                      |
-| Cognito           | $0           | Always free up to 50K MAUs                       |
-| **Total (destroyed after each session)** | **~$0** |                             |
+| Resource          | Monthly cost | Notes                                                 |
+| ----------------- | ------------ | ----------------------------------------------------- |
+| NAT Gateway       | ~$32         | Biggest cost driver; eliminated on `cdk destroy`      |
+| ALB               | ~$22         | Free tier: 750 hrs/month                              |
+| ECS Fargate       | ~$0–5        | 256 CPU / 512 MB per task, 9 tasks total              |
+| DynamoDB          | ~$0          | Always-free tier covers dev load                      |
+| ECR               | ~$0          | Free tier: 500 MB/month per repo                      |
+| CloudWatch Logs   | ~$0          | Free tier covers dev volume                           |
+| CloudWatch Dashboard | $0        | First dashboard per account is free                   |
+| CodePipeline      | ~$4          | $1/month per active V2 pipeline × 4 pipelines (3 CD + 1 CI) |
+| CodeBuild         | ~$0–1        | $0.005/min on `general1.small`, pay-as-you-go         |
+| VPC / IGW / SGs   | $0           | Always free                                           |
+| Cognito           | $0           | Always free up to 50K MAUs                            |
+| **Total (destroyed after each session)** | **~$0** |                                  |
+
+CodePipeline V2 charges by **active** pipeline. A pipeline that has never executed is free; once it executes once it counts as active for the rest of the month. To minimize cost in academic environments, destroy `FbookPipelineStack` and `FbookCiStack` between sessions if pipelines are not in active use.
