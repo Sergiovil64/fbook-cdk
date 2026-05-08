@@ -60,6 +60,18 @@ export class FbookCdkStack extends cdk.Stack {
 
     this.userPoolId = userPool.userPoolId;
 
+    new cognito.CfnUserPoolGroup(this, 'AdminGroup', {
+      userPoolId: userPool.userPoolId,
+      groupName:  'admin',
+      description: 'Administradores con acceso total a la plataforma',
+    });
+
+    new cognito.CfnUserPoolGroup(this, 'UserGroup', {
+      userPoolId: userPool.userPoolId,
+      groupName:  'user',
+      description: 'Usuarios estándar de la plataforma',
+    });
+
     const domainPrefix = 'fbook-auth';
 
     const userPoolDomain = userPool.addDomain('FbookUserPoolDomain', {
