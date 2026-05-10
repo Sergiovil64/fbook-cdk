@@ -28,6 +28,13 @@ export class PublicationStack extends cdk.Stack {
     const tablePublicaciones = new dynamodb.TableV2(this, 'PublicacionesTable', {
       tableName: 'Publicaciones',
       partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
+      globalSecondaryIndexes: [
+        {
+          indexName: 'IdUsuarioIndex',
+          partitionKey: { name: 'idUsuario', type: dynamodb.AttributeType.STRING },
+          sortKey:      { name: 'fecha',     type: dynamodb.AttributeType.NUMBER },
+        },
+      ],
       billing: dynamodb.Billing.onDemand(),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
@@ -35,6 +42,13 @@ export class PublicationStack extends cdk.Stack {
     const tableComentarios = new dynamodb.TableV2(this, 'ComentariosTable', {
       tableName: 'Comentarios',
       partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
+      globalSecondaryIndexes: [
+        {
+          indexName: 'IdPublicacionIndex',
+          partitionKey: { name: 'idPublicacion', type: dynamodb.AttributeType.STRING },
+          sortKey:      { name: 'fComentario',   type: dynamodb.AttributeType.NUMBER },
+        },
+      ],
       billing: dynamodb.Billing.onDemand(),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
@@ -42,6 +56,13 @@ export class PublicationStack extends cdk.Stack {
     const tableReacciones = new dynamodb.TableV2(this, 'ReaccionesTable', {
       tableName: 'Reacciones',
       partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
+      globalSecondaryIndexes: [
+        {
+          indexName: 'IdPublicacionIndex',
+          partitionKey: { name: 'idPublicacion', type: dynamodb.AttributeType.STRING },
+          sortKey:      { name: 'idUsuario',     type: dynamodb.AttributeType.STRING },
+        },
+      ],
       billing: dynamodb.Billing.onDemand(),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
@@ -53,13 +74,16 @@ export class PublicationStack extends cdk.Stack {
     taskRole.addToPolicy(new iam.PolicyStatement({
       actions: [
         'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem',
-        'dynamodb:DeleteItem', 'dynamodb:Scan', 'dynamodb:Query',
-        'dynamodb:DescribeTable', 'dynamodb:CreateTable',
+        'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:BatchGetItem',
+        'dynamodb:DescribeTable',
       ],
       resources: [
         'arn:aws:dynamodb:us-east-1:*:table/Publicaciones',
+        'arn:aws:dynamodb:us-east-1:*:table/Publicaciones/index/*',
         'arn:aws:dynamodb:us-east-1:*:table/Comentarios',
+        'arn:aws:dynamodb:us-east-1:*:table/Comentarios/index/*',
         'arn:aws:dynamodb:us-east-1:*:table/Reacciones',
+        'arn:aws:dynamodb:us-east-1:*:table/Reacciones/index/*',
       ],
     }));
 

@@ -35,10 +35,6 @@ export class DashboardStack extends cdk.Stack {
         title: `Errores recientes — ${svc.name}`,
         logGroupNames: [svc.logGroup],
         queryLines: [
-          // El interceptor EMF emite una línea JSON por request con Service/Route/Method/StatusCode.
-          // Filtramos las EMF con StatusCode >= 400 — único registro que tenemos de errores HTTP.
-          // (NestJS no logguea excepciones sin un global filter; si se agrega uno que escriba "ERROR",
-          // se puede ampliar la query con un OR sobre keywords.)
           'fields @timestamp, Route, Method, StatusCode, RequestLatencyMs',
           'filter @message like /CloudWatchMetrics/',
           'filter StatusCode >= 400',

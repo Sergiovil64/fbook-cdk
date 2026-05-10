@@ -96,9 +96,8 @@ new DashboardStack(app, 'FbookDashboardStack', {
   publication,
 });
 
-// ── Stack 9: CI/CD Pipeline (CodePipeline + CodeBuild + EventBridge) ──────────
-// Connection ARN viene de la CodeStar Connection creada manualmente (Fase 0).
-// Pasarlo como env var: FBOOK_CODESTAR_CONN_ARN
+// ── Stack 9: CI/CD Pipeline (CodePipeline + CodeBuild) ──────────
+
 const codestarConnectionArn = process.env.FBOOK_CODESTAR_CONN_ARN
   ?? 'arn:aws:codeconnections:us-east-1:140858350333:connection/36d58fd1-a0de-4fe9-8d91-05ab66e09fd8';
 
@@ -113,8 +112,6 @@ new PipelineStack(app, 'FbookPipelineStack', {
 });
 
 // ── Stack 10: CI (lint/type-check + build de los 3 services) ──────────────────
-// Pipeline V2 separado del CD: dispara en push a main y en PRs (open/updated).
-// Usa la misma CodeStar Connection. Sin stage Deploy.
 new CiStack(app, 'FbookCiStack', {
   env,
   description: 'Fbook — CI: type-check + build de los 3 microservicios en push a main y PRs',

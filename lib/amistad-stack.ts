@@ -27,6 +27,18 @@ export class AmistadStack extends cdk.Stack {
     const table = new dynamodb.TableV2(this, 'AmistadTable', {
       tableName: 'Amistades',
       partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
+      globalSecondaryIndexes: [
+        {
+          indexName: 'IdUsuario1Index',
+          partitionKey: { name: 'idUsuario1', type: dynamodb.AttributeType.STRING },
+          sortKey:      { name: 'id',         type: dynamodb.AttributeType.STRING },
+        },
+        {
+          indexName: 'IdUsuario2Index',
+          partitionKey: { name: 'idUsuario2', type: dynamodb.AttributeType.STRING },
+          sortKey:      { name: 'id',         type: dynamodb.AttributeType.STRING },
+        },
+      ],
       billing: dynamodb.Billing.onDemand(),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
@@ -38,10 +50,13 @@ export class AmistadStack extends cdk.Stack {
     taskRole.addToPolicy(new iam.PolicyStatement({
       actions: [
         'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem',
-        'dynamodb:DeleteItem', 'dynamodb:Scan', 'dynamodb:Query',
-        'dynamodb:DescribeTable', 'dynamodb:CreateTable',
+        'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:BatchGetItem',
+        'dynamodb:DescribeTable',
       ],
-      resources: [`arn:aws:dynamodb:us-east-1:*:table/Amistades`],
+      resources: [
+        'arn:aws:dynamodb:us-east-1:*:table/Amistades',
+        'arn:aws:dynamodb:us-east-1:*:table/Amistades/index/*',
+      ],
     }));
 
     // Task Definition

@@ -50,7 +50,6 @@ export class CiStack extends cdk.Stack {
       branch: props.githubBranch,
       connectionArn: props.codestarConnectionArn,
       output: sourceArtifact,
-      // Los triggers V2 controlan el flujo (push a main + PRs).
       triggerOnPush: false,
     });
 

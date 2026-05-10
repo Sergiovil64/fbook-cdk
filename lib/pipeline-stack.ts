@@ -20,7 +20,7 @@ export class PipelineStack extends cdk.Stack {
     super(scope, id, props);
 
     SERVICES.forEach(svc => {
-      // ── ECR repo (importado, ya existe) ────────────────────────────────────
+      // ── ECR repo ────────────────────────────────────
       const repo = ecr.Repository.fromRepositoryName(
         this, `${svc}EcrRepo`, `fbook-service-${svc}`,
       );
@@ -71,12 +71,7 @@ export class PipelineStack extends cdk.Stack {
               commands: [
                 'VERSION=$(jq -r .version image-info.json)',
                 'echo "Forcing new deployment of $SERVICE_NAME on $CLUSTER_NAME (image version $VERSION)"',
-                // El service apunta a ":latest". Build ya pusheó :latest al digest nuevo;
-                // --force-new-deployment hace que ECS pull el digest actual y haga rollout blue-green natural.
                 'aws ecs update-service --cluster $CLUSTER_NAME --service $SERVICE_NAME --force-new-deployment --region $AWS_REGION',
-                // Polling del rolloutState del PRIMARY deployment.
-                // Reemplaza `aws ecs wait services-stable` (timeout fijo 10 min, falla si hay deployments stale en flight).
-                // 60 intentos × 30s = 30 min de techo.
                 'for i in $(seq 1 60); do STATE=$(aws ecs describe-services --cluster $CLUSTER_NAME --services $SERVICE_NAME --region $AWS_REGION --query \'services[0].deployments[?status==`PRIMARY`].rolloutState\' --output text); echo "Attempt $i/60: PRIMARY rolloutState = $STATE"; if [ "$STATE" = "COMPLETED" ]; then echo "Deploy completed."; exit 0; fi; if [ "$STATE" = "FAILED" ]; then echo "Deploy FAILED (rollout state)."; exit 1; fi; sleep 30; done; echo "ERROR: Deploy did not converge within 30 minutes."; exit 1',
               ],
             },
@@ -107,10 +102,7 @@ export class PipelineStack extends cdk.Stack {
         branch: props.githubBranch,
         connectionArn: props.codestarConnectionArn,
         output: sourceArtifact,
-        // El trigger real lo define el `triggers` del pipeline (V2) — filtra por tag.
-        // Apagamos el auto-trigger del action para que no dispare en cada push a `main`.
         triggerOnPush: false,
-        // Full git clone para que `git describe --exact-match --tags HEAD` funcione en el buildspec.
         codeBuildCloneOutput: true,
       });
 

@@ -26,21 +26,30 @@ export class UsersStack extends cdk.Stack {
     const table = new dynamodb.TableV2(this, 'UsuariosTable', {
       tableName: 'Usuarios',
       partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
+      globalSecondaryIndexes: [
+        {
+          indexName: 'CorreoIndex',
+          partitionKey: { name: 'correo', type: dynamodb.AttributeType.STRING },
+        },
+      ],
       billing: dynamodb.Billing.onDemand(),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    // Task Role — acceso exclusivo a tabla Usuarios 
+    // Task Role — acceso exclusivo a tabla Usuarios
     const taskRole = new iam.Role(this, 'UsuarioTaskRole', {
       assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
     });
     taskRole.addToPolicy(new iam.PolicyStatement({
       actions: [
         'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem',
-        'dynamodb:DeleteItem', 'dynamodb:Scan', 'dynamodb:Query',
-        'dynamodb:DescribeTable', 'dynamodb:CreateTable',
+        'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:Scan',
+        'dynamodb:BatchGetItem', 'dynamodb:DescribeTable',
       ],
-      resources: [`arn:aws:dynamodb:us-east-1:*:table/Usuarios`],
+      resources: [
+        'arn:aws:dynamodb:us-east-1:*:table/Usuarios',
+        'arn:aws:dynamodb:us-east-1:*:table/Usuarios/index/*',
+      ],
     }));
     taskRole.addToPolicy(new iam.PolicyStatement({
       actions: [
