@@ -47,6 +47,7 @@ export class UsersStack extends cdk.Stack {
         'cognito-idp:AdminCreateUser',
         'cognito-idp:AdminSetUserPassword',
         'cognito-idp:AdminDeleteUser',
+        'cognito-idp:AdminAddUserToGroup',
       ],
       resources: [`arn:aws:cognito-idp:us-east-1:*:userpool/${props.cognitoUserPoolId}`],
     }));
