@@ -74,8 +74,8 @@ export class PublicationStack extends cdk.Stack {
     taskRole.addToPolicy(new iam.PolicyStatement({
       actions: [
         'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem',
-        'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:BatchGetItem',
-        'dynamodb:DescribeTable',
+        'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:Scan',
+        'dynamodb:BatchGetItem', 'dynamodb:DescribeTable',
       ],
       resources: [
         'arn:aws:dynamodb:us-east-1:*:table/Publicaciones',
